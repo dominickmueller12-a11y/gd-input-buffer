@@ -558,6 +558,40 @@ class $modify(IBLayer, GJBaseGameLayer) {
         return safe || !g_simDied;
     }
 
+    // One simulation with no input at all: the first tick at which a press
+    // would actually DO something - the player is on the ground, or touching a
+    // ring or a pad. Returns 0 if a press works right now, -1 if nothing in
+    // the window would make it work.
+    int firstEffectTick(int window, int& stepsUsed) {
+        auto& f = m_fields;
+        copyState(f->ghost1, m_player1);
+
+        float dt = g_playerDt;
+        if (!(dt > 0.0001f && dt < 4.f)) dt = 0.25f;
+
+        bool savedDebugDraw = m_isDebugDrawEnabled;
+        m_isDebugDrawEnabled = false;
+        g_simulating = true;
+        g_simDied = false;
+        g_simHitPortal = false;
+
+        auto g = f->ghost1;
+        int effect = -1;
+        for (int k = 0; k <= window; ++k) {
+            if (g->m_isOnGround || g->m_touchedRing || g->m_touchedPad) { effect = k; break; }
+            g_simTick = k;
+            stepGhost(g, dt);
+            ++stepsUsed;
+            if (g->m_isDead || g_simDied) break;
+        }
+
+        g_simulating = false;
+        g_simTick = 0;
+        m_isDebugDrawEnabled = savedDebugDraw;
+        restoreObjects();
+        return effect;
+    }
+
     // Decide how many steps to hold this input back. 0 = play it now.
     int chooseDelay(bool down, Mode mode) {
         auto pl = asPlayLayer();
@@ -595,8 +629,47 @@ class $modify(IBLayer, GJBaseGameLayer) {
 
         int chosen = 0;
         bool found = false;
+        const char* reason = nullptr;
 
-        if (alive(0)) {
+        // Landing and orb modes: a press in mid-air is not dangerous, it is
+        // simply thrown away by the game - and that wasted click is the whole
+        // reason this mod exists. Asking "does pressing now kill me" answers
+        // "no" and fires it into the void, which is why early clicks used to
+        // feel exactly like vanilla. Ask instead "when would this press
+        // actually do something", and hold it until that tick.
+        if (down && !flying) {
+            int eff = firstEffectTick(window, steps);
+            ++sims;
+            if (eff == 0) {
+                found = true;
+                chosen = 0;
+                reason = "works now";
+            }
+            else if (eff < 0) {
+                found = true;
+                chosen = 0;
+                reason = "no landing in window";
+            }
+            else {
+                // Only hold it if landing on that tick does not walk straight
+                // into a death. A short horizon is the right question here:
+                // surviving a whole second with no further clicks is something
+                // real gameplay never does.
+                int safeHorizon = std::max(scaleTicks(8), std::min(horizon, scaleTicks(24)));
+                ++sims;
+                if (survives(eff, down, gesture, eff + safeHorizon, flying, steps)) {
+                    found = true;
+                    chosen = eff;
+                    reason = "held to landing";
+                }
+                else {
+                    found = true;
+                    chosen = 0;
+                    reason = "landing unsafe";
+                }
+            }
+        }
+        else if (alive(0)) {
             found = true;
             chosen = 0;
         }
@@ -638,7 +711,8 @@ class $modify(IBLayer, GJBaseGameLayer) {
         if (debugLogging()) {
             log::info("[InputBuffer] {} {} | win {}t | delay {} ({}) | {} sims, {} ticks, {} us | start ({:.0f},{:.0f}) -> ghost end ({:.0f},{:.0f}) dx {:.0f} | maxyvel {:.2f} | objs {}/{} | deathcalls {}",
                 kModeName[static_cast<int>(mode)], down ? "press" : "release", window,
-                found ? chosen : 0, found ? (chosen == 0 ? "already safe" : "shifted") : "nothing survives",
+                found ? chosen : 0,
+                reason ? reason : (found ? (chosen == 0 ? "already safe" : "shifted") : "nothing survives"),
                 sims, steps, static_cast<long long>(totalSec * 1e6),
                 realPos.x, realPos.y, g_simEnd.x, g_simEnd.y, g_simEnd.x - realPos.x,
                 g_simMaxYVel, g_simKept, g_simObjectsSeen, g_simDeathCalls);
