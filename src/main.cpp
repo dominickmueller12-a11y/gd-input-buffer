@@ -189,6 +189,7 @@ bool g_simulating = false;    // a ghost preview is running
 bool g_simDied = false;       // the ghost died
 bool g_simHitPortal = false;  // the ghost reached something we don't simulate
 bool g_smart = true;          // ghost may use orbs / pads / gravity portals
+int g_simObjectsSeen = 0;     // objects the ghost's collision pass looked at (debug)
 double g_stallSeconds = 0.0;  // time spent deciding; removed from the next frame
 
 PlayerObject* g_ghost1 = nullptr;
@@ -435,6 +436,25 @@ class $modify(IBLayer, GJBaseGameLayer) {
         ghost->m_touchedRing = real->m_touchedRing;
         ghost->m_touchedPad = real->m_touchedPad;
         ghost->m_touchedGravityPortal = real->m_touchedGravityPortal;
+        // position / motion, in case copyAttributes leaves any of it out
+        ghost->setPosition(real->getPosition());
+        ghost->setRotation(real->getRotation());
+        ghost->m_position = real->m_position;
+        ghost->m_lastGroundedPos = real->m_lastGroundedPos;
+        ghost->m_yVelocity = real->m_yVelocity;
+        ghost->m_fallSpeed = real->m_fallSpeed;
+        ghost->m_yVelocityBeforeSlope = real->m_yVelocityBeforeSlope;
+        ghost->m_groundYVelocity = real->m_groundYVelocity;
+        ghost->m_speedMultiplier = real->m_speedMultiplier;
+        ghost->m_gravity = real->m_gravity;
+        ghost->m_isGoingLeft = real->m_isGoingLeft;
+        ghost->m_rotationSpeed = real->m_rotationSpeed;
+        ghost->m_isRotating = real->m_isRotating;
+        ghost->m_totalTime = real->m_totalTime;
+        ghost->m_objectSnappedTo = real->m_objectSnappedTo;
+        ghost->m_maybeLastGroundObject = real->m_maybeLastGroundObject;
+        ghost->m_isDead = false;
+        ghost->m_isLocked = real->m_isLocked;
     }
 
     static void pressGhost(PlayerObject* ghost, bool down) {
@@ -521,6 +541,10 @@ class $modify(IBLayer, GJBaseGameLayer) {
 
         auto t0 = std::chrono::steady_clock::now();
         int sims = 0, steps = 0;
+        g_simObjectsSeen = 0;
+        CCPoint realPos = m_player1->getPosition();
+        copyState(m_fields->ghost1, m_player1);
+        CCPoint ghostPos = m_fields->ghost1->getPosition();
 
         auto alive = [&](int d) -> bool {
             if (steps + horizon + d > budget) return false;
@@ -569,10 +593,11 @@ class $modify(IBLayer, GJBaseGameLayer) {
         g_stallSeconds += totalSec;
 
         if (debugLogging()) {
-            log::info("[InputBuffer] {} {} | window {}t | delay {} ({}) | {} sims, {} ticks, {} us",
+            log::info("[InputBuffer] {} {} | window {}t | delay {} ({}) | {} sims, {} ticks, {} us | real ({:.1f},{:.1f}) ghost ({:.1f},{:.1f}) yvel {:.2f} | objs seen {}",
                 kModeName[static_cast<int>(mode)], down ? "press" : "release", window,
                 found ? chosen : 0, found ? (chosen == 0 ? "already safe" : "shifted") : "nothing survives",
-                sims, steps, static_cast<long long>(totalSec * 1e6));
+                sims, steps, static_cast<long long>(totalSec * 1e6),
+                realPos.x, realPos.y, ghostPos.x, ghostPos.y, m_player1->m_yVelocity, g_simObjectsSeen);
         }
 
         return found ? chosen : 0;
@@ -729,6 +754,7 @@ class $modify(IBLayer, GJBaseGameLayer) {
             GJBaseGameLayer::collisionCheckObjects(player, objects, objectCount, dt);
             return;
         }
+        g_simObjectsSeen += objectCount;
         static gd::vector<GameObject*> relevant;
         relevant.clear();
         if (static_cast<int>(relevant.capacity()) < objectCount) relevant.reserve(objectCount);
