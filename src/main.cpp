@@ -178,6 +178,7 @@ std::string statusText() {
     std::string s = fmt::format("Buffer: {}t", main);
     s += fmt::format(" | Wave: {}", kWaveModes[static_cast<int>(waveMode())]);
     if (tps() != kBaseTps) s += fmt::format(" | {} TPS", tps());
+    s += setting<bool>("safe-mode") ? " | SAFE (progress not saved)" : " | saving progress";
     return s;
 }
 
@@ -502,6 +503,11 @@ class $modify(IBLayer, GJBaseGameLayer) {
         float dt = g_playerDt;
         if (!(dt > 0.0001f && dt < 4.f)) dt = 0.25f;
 
+        // The ghost's collision checks would otherwise add their hitboxes to
+        // the debug overlay, which flashes on screen for a frame.
+        bool savedDebugDraw = m_isDebugDrawEnabled;
+        m_isDebugDrawEnabled = false;
+
         g_simulating = true;
         g_simDied = false;
         g_simHitPortal = false;
@@ -531,6 +537,7 @@ class $modify(IBLayer, GJBaseGameLayer) {
         g_simEnd = f->ghost1->getPosition();
 
         g_simulating = false;
+        m_isDebugDrawEnabled = savedDebugDraw;
         restoreObjects();
         return safe || !g_simDied;
     }
@@ -563,8 +570,9 @@ class $modify(IBLayer, GJBaseGameLayer) {
         copyState(m_fields->ghost1, m_player1);
         CCPoint ghostPos = m_fields->ghost1->getPosition();
 
+        bool budgetHit = false;
         auto alive = [&](int d) -> bool {
-            if (steps + horizon + d > budget) return false;
+            if (steps + horizon + d > budget) { budgetHit = true; return false; }
             ++sims;
             return survives(d, down, gesture, horizon + d, flying, steps);
         };
@@ -576,19 +584,21 @@ class $modify(IBLayer, GJBaseGameLayer) {
             found = true;
             chosen = 0;
         }
-        else if (alive(window)) {
+        else if (!budgetHit && alive(window)) {
             // Too early, but the end of the window survives: find the first
-            // surviving tick. (hi always survives, so the answer is hi.)
+            // surviving tick. `hi` is always one we checked and survived, so
+            // if the budget runs out part-way it is still a usable answer.
             int lo = 1, hi = window;
             while (lo < hi) {
                 int mid = lo + (hi - lo) / 2;
                 if (alive(mid)) hi = mid;
+                else if (budgetHit) break;
                 else lo = mid + 1;
             }
             found = true;
             chosen = hi;
         }
-        else {
+        else if (!budgetHit) {
             // Neither end survives: coarse scan, then refine downward.
             int stride = std::max(1, window / 8);
             for (int d = stride; d < window; d += stride) {
@@ -616,6 +626,7 @@ class $modify(IBLayer, GJBaseGameLayer) {
                 sims, steps, static_cast<long long>(totalSec * 1e6),
                 realPos.x, realPos.y, g_simEnd.x, g_simEnd.y, g_simEnd.x - realPos.x,
                 g_simMaxYVel, g_simKept, g_simObjectsSeen, g_simDeathCalls);
+            if (budgetHit) log::warn("[InputBuffer] out of simulation budget: raise \"Max simulated ticks per click\"");
         }
 
         return found ? chosen : 0;
@@ -846,6 +857,12 @@ class $modify(IBLayer, GJBaseGameLayer) {
     void gameEventTriggered(GJGameEvent event, int material, int playerID) {
         if (g_simulating) return;
         GJBaseGameLayer::gameEventTriggered(event, material, playerID);
+    }
+
+    // Never let a preview put hitboxes on screen.
+    void updateDebugDraw() {
+        if (g_simulating) return;
+        GJBaseGameLayer::updateDebugDraw();
     }
 
     void playerWillSwitchMode(PlayerObject* player, GameObject* object) {
