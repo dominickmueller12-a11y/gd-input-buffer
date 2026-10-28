@@ -93,6 +93,10 @@ constexpr const char* kMainPresets[] = {
     "16 ticks (4 frames)",
     "24 ticks (6 frames)",
     "32 ticks (8 frames)",
+    "48 ticks (12 frames)",
+    "64 ticks (16 frames)",
+    "96 ticks (24 frames)",
+    "120 ticks (0.5 second)",
 };
 constexpr int kMainPresetCount = sizeof(kMainPresets) / sizeof(kMainPresets[0]);
 
@@ -492,7 +496,6 @@ class $modify(IBLayer, GJBaseGameLayer) {
         g_simHitPortal = false;
 
         bool safe = false;
-        int airTicks = 0, groundTicks = 0;
 
         for (int k = 0; k < horizon; ++k) {
             if (k == delay) {
@@ -508,14 +511,6 @@ class $modify(IBLayer, GJBaseGameLayer) {
             ++stepsUsed;
             if (g_simDied) break;
             if (g_simHitPortal) { safe = true; break; }
-
-            // Landing modes: once the ghost has been in the air and then sat on
-            // the ground for a few ticks after the input, the jump worked.
-            if (!flying && k > delay + gesture) {
-                bool grounded = f->ghost1->m_isOnGround && (!dual || f->ghost2->m_isOnGround);
-                if (!grounded) { ++airTicks; groundTicks = 0; }
-                else if (airTicks >= 6 && ++groundTicks > 2) { safe = true; break; }
-            }
         }
 
         g_simulating = false;
@@ -531,7 +526,9 @@ class $modify(IBLayer, GJBaseGameLayer) {
 
         int window = scaleTicks(windowBaseTicks(mode));
         if (window <= 0) return 0;
-        int horizon = scaleTicks(static_cast<int>(setting<int64_t>("look-ahead")));
+        // The look-ahead must reach past the whole window, or a big window
+        // could never find the danger it is supposed to dodge.
+        int horizon = std::max(scaleTicks(static_cast<int>(setting<int64_t>("look-ahead"))), window + scaleTicks(16));
         int budget = static_cast<int>(setting<int64_t>("sim-budget"));
         int gesture = isHoldMode(mode)
             ? std::max(1, scaleTicks(static_cast<int>(setting<int64_t>("hold-length"))))
