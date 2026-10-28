@@ -203,8 +203,8 @@ int g_simTick = 0;            // which tick of the preview is being stepped
 // about easing or a move that is about to stop), but it is far closer than
 // treating moving platforms and saws as if they were standing still.
 struct Motion {
-    cocos2d::CCPoint last = {0.f, 0.f};
-    cocos2d::CCPoint vel = {0.f, 0.f};
+    cocos2d::CCPoint last = cocos2d::CCPoint(0.f, 0.f);
+    cocos2d::CCPoint vel = cocos2d::CCPoint(0.f, 0.f);
     bool seen = false;
 };
 std::unordered_map<GameObject*, Motion> g_objMotion;
@@ -825,7 +825,7 @@ class $modify(IBLayer, GJBaseGameLayer) {
                     auto pos = object->getPosition();
                     auto& m = g_objMotion[object];
                     if (m.seen) {
-                        m.vel = { pos.x - m.last.x, pos.y - m.last.y };
+                        m.vel = cocos2d::CCPoint(pos.x - m.last.x, pos.y - m.last.y);
                     }
                     m.last = pos;
                     m.seen = true;
@@ -880,7 +880,7 @@ class $modify(IBLayer, GJBaseGameLayer) {
                 if (std::fabs(v.x) < 0.01f && std::fabs(v.y) < 0.01f) continue;
                 auto cur = object->getPosition();
                 moved.emplace_back(object, cur);
-                object->setPosition({ cur.x + v.x * g_simTick, cur.y + v.y * g_simTick });
+                object->setPosition(cocos2d::CCPoint(cur.x + v.x * g_simTick, cur.y + v.y * g_simTick));
                 object->setObjectRectDirty(true);
             }
         }
