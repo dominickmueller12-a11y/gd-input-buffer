@@ -1077,6 +1077,23 @@ class $modify(IBLayer, GJBaseGameLayer) {
             bool spent = !s.minHoldOnly
                 && ((s.sawFall && against) || player->m_isUpsideDown != s.upsideAtPress);
             bool expired = s.heldTicks >= s.holdLimit;
+
+            // Orbs and rings only fire on a fresh press while you are touching
+            // them - a button that was already down does nothing, so a held
+            // click flies straight through an orb. While a click is waiting,
+            // re-send it as a new press so it can catch one.
+            if (!spent && !expired && s.wantRelease && !s.minHoldOnly) {
+                bool onRing = player->m_touchedRing;
+                int every = std::max(1, scaleTicks(static_cast<int>(setting<int64_t>("retap-ticks"))));
+                bool due = setting<bool>("orb-retap") && (s.heldTicks % every == 0);
+                if (onRing || due) {
+                    inject(false, s.holdIsP1);
+                    inject(true, s.holdIsP1);
+                    if (debugLogging() && onRing) {
+                        log::info("[InputBuffer] simple: re-sent the click on a ring at {}t", s.heldTicks);
+                    }
+                }
+            }
             if (s.wantRelease && (spent || expired)) {
                 inject(false, s.holdIsP1);
                 s.holding = false;
