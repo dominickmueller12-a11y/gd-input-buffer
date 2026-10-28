@@ -316,6 +316,8 @@ class $modify(IBLayer, GJBaseGameLayer) {
         float tickDt = 1.f / kBaseTps;    // dt of the last real physics step
         int sinceInput = 999;             // ticks since the last real input
         int rapid = 0;                    // consecutive fast inputs (wave spam)
+        bool haveLastRaw = false;
+        bool lastRawDown = false;
         double tpsAccum = 0.0;
         float tpsRealDelta = 0.f;
         bool tpsHide = false;
@@ -618,6 +620,17 @@ class $modify(IBLayer, GJBaseGameLayer) {
         int idx = slotFor(isPlayer1);
         auto& s = f->slot[idx];
 
+        // The game hands us the same input twice in one tick (once mid-step,
+        // once after). The second copy must not undo a decision: drop it if
+        // something is queued, otherwise just pass it through.
+        bool duplicate = f->haveLastRaw && f->sinceInput == 0 && f->lastRawDown == down;
+        f->haveLastRaw = true;
+        f->lastRawDown = down;
+        if (duplicate) {
+            if (s.queue.empty()) inject(down, isPlayer1);
+            return;
+        }
+
         // Something earlier is still waiting: shift this one by the same amount.
         if (!s.queue.empty()) {
             enqueue(s, down, isPlayer1, s.shift);
@@ -629,12 +642,6 @@ class $modify(IBLayer, GJBaseGameLayer) {
         Mode mode = modeOf(player);
         bool eligible = player && !player->m_isDashing && inputIsBuffered(mode, down);
 
-        // A press while standing on the ground in a landing mode always
-        // registers right away: nothing to buffer.
-        if (eligible && down && !isFlyingMode(mode) && (player->m_isOnGround || player->m_isOnGround2)) {
-            eligible = false;
-        }
-
         // Fast spam (wave): don't fight the player's rhythm.
         if (f->sinceInput < 8) {
             if (++f->rapid >= 3) eligible = false;
@@ -643,12 +650,6 @@ class $modify(IBLayer, GJBaseGameLayer) {
             f->rapid = 0;
         }
         f->sinceInput = 0;
-
-        // GD reports every click twice (once per player). Outside 2-player
-        // levels the player-2 copy just follows whatever player 1 decided.
-        if (!isPlayer1) {
-            eligible = false;
-        }
 
         auto pl = asPlayLayer();
         if (!eligible || !pl || pl->m_isPaused || m_playerDied) {
@@ -690,6 +691,7 @@ class $modify(IBLayer, GJBaseGameLayer) {
         f->pendingRaw.clear();
         f->sinceInput = 999;
         f->rapid = 0;
+        f->haveLastRaw = false;
     }
 
     // ---- status label -----------------------------------------------------
