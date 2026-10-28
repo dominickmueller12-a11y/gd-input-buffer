@@ -8,7 +8,7 @@
 	},
 	"id": "dominick.input-buffer",
 	"name": "Input Buffer",
-	"version": "v2.1.0",
+	"version": "v2.2.0",
 	"developer": "Dominick",
 	"description": "Click a few ticks early and the click is moved to the tick where it actually works.",
 	"tags": [
@@ -31,6 +31,25 @@
 				"Simple (hold the click)",
 				"Predictive (simulate)"
 			]
+		},
+		"orb-retap": {
+			"type": "bool",
+			"name": "Re-send held clicks (needed for orbs)",
+			"description": "Orbs and rings only fire on a fresh press while you are touching them. A button that is merely held down does nothing, so without this a held click flies straight through an orb and never triggers it.\n\nWith this on, a click that is still waiting is re-sent as a new press a few times a second until the game spends it, so it can catch an orb, a ring or a pad on the way. Turn it off if the extra presses upset another mod's click counter.",
+			"default": true
+		},
+		"retap-ticks": {
+			"type": "int",
+			"name": "Re-send every (ticks)",
+			"description": "How often a waiting click is re-sent, in 240-TPS ticks. 4 is about 60 times a second. Lower catches orbs more reliably and sends more presses; higher is gentler.",
+			"default": 4,
+			"min": 1,
+			"max": 32,
+			"control": {
+				"arrows": true,
+				"slider": true,
+				"slider-step": 1
+			}
 		},
 		"main-window": {
 			"type": "string",

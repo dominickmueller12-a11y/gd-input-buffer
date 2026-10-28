@@ -1,3 +1,7 @@
+# v2.2.0
+- Orbs now work. Rings and orbs in Geometry Dash only fire on a fresh press while you are touching them: a button that is already held down does nothing at all. The buffer held the button and flew straight through every orb, so early clicks before an orb were never saved. A waiting click is now re-sent as a new press a few times a second (and immediately on contact with a ring) until the game spends it. New settings: "Re-send held clicks" and "Re-send every (ticks)".
+- The claim in v2.0.0's notes that orbs work for free because holding through one activates them was simply wrong.
+
 # v2.1.0
 - Fixed the reason v2.0.1 still did nothing: the "the game spent your press" detector compared y-velocity between frames against a threshold of 2.0, but the check runs once per frame and that is four physics ticks, so ordinary falling moves y-velocity about 3.5 and tripped it instantly. Every press was marked spent on its first frame and the release went through untouched - 26 presses held, 0 ever buffered.
 - It now uses a sign test instead: gravity can only pull you the way gravity points, so the first tick you move the other way is the tick the press was spent on. No threshold to get wrong. A gravity flip (ball, spider, blue orb) counts as spent too.
