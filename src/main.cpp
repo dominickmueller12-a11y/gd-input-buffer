@@ -208,6 +208,16 @@ struct Motion {
     bool seen = false;
 };
 std::unordered_map<GameObject*, Motion> g_objMotion;
+
+// The no-input path the ghost takes, used to tell a press that does something
+// from one the game throws away.
+std::vector<cocos2d::CCPoint> g_baseline;
+
+// Diagnostics for the decision log, so a bad decision can be read back.
+int g_dbgEff = -2;
+bool g_dbgGround = false;
+bool g_dbgRing = false;
+bool g_dbgPad = false;
 // The dt the game hands the player's own physics step. It is NOT seconds:
 // one 240-tick is 0.25 in these units, 60x the 1/240 that the layer's
 // processCommands gets. Stepping the ghost with seconds made it crawl
@@ -558,11 +568,47 @@ class $modify(IBLayer, GJBaseGameLayer) {
         return safe || !g_simDied;
     }
 
-    // One simulation with no input at all: the first tick at which a press
-    // would actually DO something - the player is on the ground, or touching a
-    // ring or a pad. Returns 0 if a press works right now, -1 if nothing in
-    // the window would make it work.
-    int firstEffectTick(int window, int& stepsUsed) {
+    // Run the ghost forward with no input at all, recording where it is on
+    // every tick. This is the yardstick for "did the press do anything": a
+    // press that leaves the player on this exact path did nothing at all.
+    void runBaseline(int horizon, int& stepsUsed) {
+        auto& f = m_fields;
+        copyState(f->ghost1, m_player1);
+
+        float dt = g_playerDt;
+        if (!(dt > 0.0001f && dt < 4.f)) dt = 0.25f;
+
+        bool savedDebugDraw = m_isDebugDrawEnabled;
+        m_isDebugDrawEnabled = false;
+        g_simulating = true;
+        g_simDied = false;
+        g_simHitPortal = false;
+
+        g_baseline.clear();
+        g_baseline.reserve(horizon);
+        auto g = f->ghost1;
+        for (int k = 0; k < horizon; ++k) {
+            g_simTick = k;
+            stepGhost(g, dt);
+            ++stepsUsed;
+            g_baseline.push_back(g->getPosition());
+            if (g->m_isDead || g_simDied) break;
+        }
+
+        g_simulating = false;
+        g_simTick = 0;
+        m_isDebugDrawEnabled = savedDebugDraw;
+        restoreObjects();
+    }
+
+    // True if pressing on tick `delay` moves the ghost off the baseline path
+    // within `probe` ticks. m_isOnGround and friends lie - they stay set while
+    // the player is falling - so this asks the simulation itself instead of
+    // trusting a flag.
+    bool hasEffect(int delay, bool down, int gesture, int probe, int& stepsUsed) {
+        int last = delay + probe;
+        if (last > static_cast<int>(g_baseline.size())) return false;
+
         auto& f = m_fields;
         copyState(f->ghost1, m_player1);
 
@@ -576,12 +622,16 @@ class $modify(IBLayer, GJBaseGameLayer) {
         g_simHitPortal = false;
 
         auto g = f->ghost1;
-        int effect = -1;
-        for (int k = 0; k <= window; ++k) {
-            if (g->m_isOnGround || g->m_touchedRing || g->m_touchedPad) { effect = k; break; }
+        bool diverged = false;
+        for (int k = 0; k < last; ++k) {
+            if (k == delay) pressGhost(g, down);
+            if (k == delay + gesture) pressGhost(g, !down);
             g_simTick = k;
             stepGhost(g, dt);
             ++stepsUsed;
+            auto p = g->getPosition();
+            auto b = g_baseline[k];
+            if (std::fabs(p.y - b.y) > 0.5f || std::fabs(p.x - b.x) > 0.5f) { diverged = true; break; }
             if (g->m_isDead || g_simDied) break;
         }
 
@@ -589,7 +639,7 @@ class $modify(IBLayer, GJBaseGameLayer) {
         g_simTick = 0;
         m_isDebugDrawEnabled = savedDebugDraw;
         restoreObjects();
-        return effect;
+        return diverged;
     }
 
     // Decide how many steps to hold this input back. 0 = play it now.
@@ -617,6 +667,10 @@ class $modify(IBLayer, GJBaseGameLayer) {
         g_simDeathCalls = 0;
         g_simMaxYVel = 0.0;
         CCPoint realPos = m_player1->getPosition();
+        g_dbgEff = -2;
+        g_dbgGround = m_player1->m_isOnGround;
+        g_dbgRing = m_player1->m_touchedRing;
+        g_dbgPad = m_player1->m_touchedPad;
         copyState(m_fields->ghost1, m_player1);
         CCPoint ghostPos = m_fields->ghost1->getPosition();
 
@@ -638,8 +692,49 @@ class $modify(IBLayer, GJBaseGameLayer) {
         // feel exactly like vanilla. Ask instead "when would this press
         // actually do something", and hold it until that tick.
         if (down && !flying) {
-            int eff = firstEffectTick(window, steps);
+            int probe = std::max(2, scaleTicks(6));
+            runBaseline(window + probe + 1, steps);
             ++sims;
+
+            int eff = -1;
+            auto effect = [&](int d) -> bool {
+                ++sims;
+                return hasEffect(d, down, gesture, probe, steps);
+            };
+
+            if (effect(0)) {
+                eff = 0;
+            }
+            else if (effect(window)) {
+                // Once the player is back on the ground a press always jumps,
+                // so the first tick that does something is monotonic there and
+                // a binary search finds it in about seven tries.
+                int lo = 1, hi = window;
+                while (lo < hi) {
+                    int mid = lo + (hi - lo) / 2;
+                    if (effect(mid)) hi = mid;
+                    else lo = mid + 1;
+                }
+                eff = hi;
+            }
+            else {
+                // Orbs and pads are only live for a few ticks, so the search
+                // above can step straight over one. Sweep for it.
+                int stride = std::max(1, scaleTicks(4));
+                for (int d = stride; d < window; d += stride) {
+                    if (effect(d)) {
+                        eff = d;
+                        for (int e = d - 1; e >= 1 && e > d - stride; --e) {
+                            if (effect(e)) eff = e;
+                            else break;
+                        }
+                        break;
+                    }
+                    if (steps > budget) { budgetHit = true; break; }
+                }
+            }
+
+            g_dbgEff = eff;
             if (eff == 0) {
                 found = true;
                 chosen = 0;
@@ -648,7 +743,7 @@ class $modify(IBLayer, GJBaseGameLayer) {
             else if (eff < 0) {
                 found = true;
                 chosen = 0;
-                reason = "no landing in window";
+                reason = "nothing to hit";
             }
             else {
                 // Only hold it if landing on that tick does not walk straight
@@ -709,13 +804,15 @@ class $modify(IBLayer, GJBaseGameLayer) {
         g_stallSeconds += totalSec;
 
         if (debugLogging()) {
-            log::info("[InputBuffer] {} {} | win {}t | delay {} ({}) | {} sims, {} ticks, {} us | start ({:.0f},{:.0f}) -> ghost end ({:.0f},{:.0f}) dx {:.0f} | maxyvel {:.2f} | objs {}/{} | deathcalls {}",
+            log::info("[InputBuffer] {} {} | win {}t | delay {} ({}) | {} sims, {} ticks, {} us | start ({:.0f},{:.0f}) -> ghost end ({:.0f},{:.0f}) dx {:.0f} | maxyvel {:.2f} | objs {}/{} | deathcalls {} | eff {} | ground {} ring {} pad {} | base {}t",
                 kModeName[static_cast<int>(mode)], down ? "press" : "release", window,
                 found ? chosen : 0,
                 reason ? reason : (found ? (chosen == 0 ? "already safe" : "shifted") : "nothing survives"),
                 sims, steps, static_cast<long long>(totalSec * 1e6),
                 realPos.x, realPos.y, g_simEnd.x, g_simEnd.y, g_simEnd.x - realPos.x,
-                g_simMaxYVel, g_simKept, g_simObjectsSeen, g_simDeathCalls);
+                g_simMaxYVel, g_simKept, g_simObjectsSeen, g_simDeathCalls,
+                g_dbgEff, g_dbgGround ? 1 : 0, g_dbgRing ? 1 : 0, g_dbgPad ? 1 : 0,
+                static_cast<int>(g_baseline.size()));
             if (budgetHit) log::warn("[InputBuffer] out of simulation budget: raise \"Max simulated ticks per click\"");
         }
 
