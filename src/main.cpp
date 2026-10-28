@@ -280,13 +280,18 @@ class $modify(IBLayer, GJBaseGameLayer) {
 
     // Place the input `delay` steps from now and run `horizon` steps.
     // True if the player is still alive afterwards.
-    bool survives(int delay, bool down, bool isPlayer1, bool tap, int horizon, int& stepsUsed) {
+    // The player's input is modelled as a gesture: the input itself, then the
+    // opposite input `gesture` ticks later (a tap for landing modes, a short
+    // hold / short release for flying modes). Without the opposite input the
+    // preview would think every wave release falls into the floor and every
+    // ship press flies into the ceiling, and shift inputs that were fine.
+    bool survives(int delay, bool down, bool isPlayer1, int gesture, int horizon, int& stepsUsed) {
         g_simDied = false;
         g_simCompleted = false;
         g_simulating = true;
         for (int k = 0; k < horizon; ++k) {
             if (k == delay) inject(down, isPlayer1);
-            if (tap && k == delay + 1) inject(false, isPlayer1);
+            if (k == delay + gesture) inject(!down, isPlayer1);
             rawStep(simArgs(k));
             ++stepsUsed;
             if (g_simDied || g_simCompleted) break;
@@ -304,7 +309,10 @@ class $modify(IBLayer, GJBaseGameLayer) {
         if (window <= 0) return 0;
         int horizon = scaleTicks(static_cast<int>(setting<int64_t>("look-ahead")));
         int budget = static_cast<int>(setting<int64_t>("sim-budget"));
-        bool tap = down && !isHoldMode(mode);
+        // taps release on the next tick; holds last "hold-length" ticks
+        int gesture = isHoldMode(mode)
+            ? std::max(1, scaleTicks(static_cast<int>(setting<int64_t>("hold-length"))))
+            : 1;
 
         auto t0 = std::chrono::steady_clock::now();
 
@@ -338,7 +346,7 @@ class $modify(IBLayer, GJBaseGameLayer) {
             if (steps + horizon + d > budget) return false;
             if (sims > 0) rewind();
             ++sims;
-            return survives(d, down, isPlayer1, tap, horizon + d, steps);
+            return survives(d, down, isPlayer1, gesture, horizon + d, steps);
         };
 
         int chosen = 0;
