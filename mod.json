@@ -8,7 +8,7 @@
 	},
 	"id": "dominick.input-buffer",
 	"name": "Input Buffer",
-	"version": "v2.0.1",
+	"version": "v2.1.0",
 	"developer": "Dominick",
 	"description": "Click a few ticks early and the click is moved to the tick where it actually works.",
 	"tags": [
@@ -25,7 +25,7 @@
 		"buffer-mode": {
 			"type": "string",
 			"name": "Buffer Mode",
-			"description": "Simple (recommended): the mod does not predict anything. Your click goes through instantly and the button is simply held a few more ticks, so the game itself spends it on the next landing or orb - Geometry Dash already jumps the moment you land while holding. Nothing can be mistimed, because the game decides the timing. Applies to cube, ball, robot and spider; ship, UFO, swing and wave pass through untouched, because holding the button there is the control itself and a click is never wasted.\n\nPredictive: the old behaviour, and the only mode that touches the flying modes. A hidden copy of your player is simulated forward to work out which tick the click should land on. More ambitious, but it depends on reading the real player's state correctly and it gets that wrong often enough to matter.",
+			"description": "Simple (recommended): the mod does not predict anything.\n\nCube, ball, robot and spider: your click goes through instantly and the button is held until the game actually spends it on a landing or an orb, up to that mode's window. Geometry Dash already jumps the moment you land while holding, so the game decides the timing and nothing can be mistimed.\n\nShip, UFO, swing and wave: a click there is never thrown away, so there is nothing to hold for. Instead a very short tap is stretched to the minimum length set by \"Minimum tap length\" below, so quick inputs come out the same every time.\n\nPredictive: the old behaviour. A hidden copy of your player is simulated forward to work out which tick the click should land on. More ambitious, but it depends on reading the real player's state correctly and it gets that wrong often enough to matter.",
 			"default": "Simple (hold the click)",
 			"one-of": [
 				"Simple (hold the click)",
@@ -244,8 +244,8 @@
 		},
 		"hold-length": {
 			"type": "int",
-			"name": "Assumed hold length (ticks)",
-			"description": "Flying modes only. The preview assumes a press is held this many ticks and then released, and a release is followed by a re-press this many ticks later. Lower if you tap very fast (wave spam), higher if you hold longer. 240 ticks = 1 second.",
+			"name": "Minimum tap length (ticks)",
+			"description": "Simple mode, flying modes only: a tap shorter than this is stretched to this length, so quick ship, UFO, swing and wave inputs come out consistently. Keep it small - this is a real hold, and a long one would fly you into the ceiling. 240 ticks = 1 second.\n\nPredictive mode: how long the preview assumes a press is held before being released.",
 			"default": 10,
 			"min": 2,
 			"max": 48,

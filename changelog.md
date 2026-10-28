@@ -1,3 +1,9 @@
+# v2.1.0
+- Fixed the reason v2.0.1 still did nothing: the "the game spent your press" detector compared y-velocity between frames against a threshold of 2.0, but the check runs once per frame and that is four physics ticks, so ordinary falling moves y-velocity about 3.5 and tripped it instantly. Every press was marked spent on its first frame and the release went through untouched - 26 presses held, 0 ever buffered.
+- It now uses a sign test instead: gravity can only pull you the way gravity points, so the first tick you move the other way is the tick the press was spent on. No threshold to get wrong. A gravity flip (ball, spider, blue orb) counts as spent too.
+- A press arriving while a release is still held back no longer injects a second press. That double-send is what used to read as three clicks per click.
+- Simple mode now covers ship, UFO, swing and wave as well, as a minimum tap length rather than a wait: a tap shorter than "Minimum tap length" is stretched to it, so fast inputs come out the same every time. Default 10 ticks.
+
 # v2.0.1
 - Simple mode now leaves ship, UFO, swing and wave completely alone. Holding the button in those modes is the control itself: a ship accelerates gradually, so there is no single tick where the press is spent to let go on, and the button would have stayed down far too long. A click in a flying mode is never thrown away in the first place, so there is nothing there to buffer.
 
