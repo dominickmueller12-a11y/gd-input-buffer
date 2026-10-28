@@ -8,7 +8,7 @@
 	},
 	"id": "dominick.input-buffer",
 	"name": "Input Buffer",
-	"version": "v1.4.0",
+	"version": "v1.5.0",
 	"developer": "Dominick",
 	"description": "Click a few ticks early and the click is moved to the tick where it actually works.",
 	"tags": ["gameplay", "utility", "cheat"],
@@ -201,6 +201,12 @@
 			"min": 2,
 			"max": 48,
 			"control": { "arrows": true, "arrow-step": 2, "slider": true, "slider-step": 2 }
+		},
+		"simulate-moving": {
+			"type": "bool",
+			"name": "Preview moving objects",
+			"description": "Measures how fast nearby platforms, saws and other moving objects are travelling and carries that motion forward during the preview, instead of treating them as stationary. Needed for levels with moving parts. It is an approximation: it cannot know that a move is about to stop or change direction.",
+			"default": true
 		},
 		"simulate-interactables": {
 			"type": "bool",
