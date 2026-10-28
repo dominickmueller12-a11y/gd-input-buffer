@@ -652,6 +652,12 @@ class $modify(IBLayer, GJBaseGameLayer) {
 
         auto pl = asPlayLayer();
         if (!eligible || !pl || pl->m_isPaused || m_playerDied) {
+            if (debugLogging()) {
+                log::info("[InputBuffer] raw {} p1={} mode={} ground={}/{} dashing={} buffered={} rapid={} -> passthrough",
+                    down ? "press" : "release", isPlayer1, kModeName[static_cast<int>(mode)],
+                    player ? player->m_isOnGround : false, player ? player->m_isOnGround2 : false,
+                    player ? player->m_isDashing : false, inputIsBuffered(mode, down), f->rapid);
+            }
             inject(down, isPlayer1);
             return;
         }
@@ -699,6 +705,10 @@ class $modify(IBLayer, GJBaseGameLayer) {
     // ---- input hooks ------------------------------------------------------
 
     void handleButton(bool down, int button, bool isPlayer1) {
+        if (!g_simulating && debugLogging() && asPlayLayer()) {
+            log::info("[InputBuffer] handleButton down={} button={} p1={} insideStep={} queued={}",
+                down, button, isPlayer1, m_fields->insideStep, m_fields->slot[0].queue.size());
+        }
         if (g_simulating || button != kJumpButton || !asPlayLayer()) {
             GJBaseGameLayer::handleButton(down, button, isPlayer1);
             return;
