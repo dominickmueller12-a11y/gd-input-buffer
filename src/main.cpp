@@ -184,6 +184,8 @@ bool g_simulating = false;   // a look-ahead run is in progress
 bool g_busy = false;         // a decision (checkpoint / rewinds) is in progress
 bool g_simDied = false;      // the player died inside the look-ahead
 bool g_simCompleted = false; // the level was completed inside the look-ahead
+double g_stallSeconds = 0.0; // time spent deciding; removed from the next frame's delta
+                             // so the game pauses for it instead of catching up
 
 struct StepArgs {
     float dt;
@@ -310,6 +312,8 @@ class $modify(IBLayer, GJBaseGameLayer) {
         auto checkpoint = pl->createCheckpoint();
         if (!checkpoint) return 0;
         checkpoint->retain();
+        auto tCheckpoint = std::chrono::steady_clock::now();
+        double rewindUs = 0.0;
 
         auto savedQueue = m_queuedButtons;
         bool savedDied = m_playerDied;
@@ -318,9 +322,11 @@ class $modify(IBLayer, GJBaseGameLayer) {
         int steps = 0;
 
         auto rewind = [&]() {
+            auto r0 = std::chrono::steady_clock::now();
             pl->loadFromCheckpoint(checkpoint);
             m_queuedButtons = savedQueue;
             m_playerDied = savedDied;
+            rewindUs += std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - r0).count();
         };
 
         // Runs one candidate. Returns false (dead) when out of budget so the
@@ -375,13 +381,18 @@ class $modify(IBLayer, GJBaseGameLayer) {
         rewind();
         checkpoint->release();
 
+        auto t1 = std::chrono::steady_clock::now();
+        double totalSec = std::chrono::duration<double>(t1 - t0).count();
+        g_stallSeconds += totalSec;
+
         if (debugLogging()) {
-            auto us = std::chrono::duration_cast<std::chrono::microseconds>(
-                std::chrono::steady_clock::now() - t0).count();
-            log::info("[InputBuffer] {} {} | window {}t | delay {} ({}) | {} sims, {} ticks, {} us",
+            auto us = static_cast<long long>(totalSec * 1e6);
+            auto cpUs = std::chrono::duration_cast<std::chrono::microseconds>(tCheckpoint - t0).count();
+            log::info("[InputBuffer] {} {} | window {}t | delay {} ({}) | {} sims, {} ticks | {} us total (checkpoint {} us, rewinds {} us, ~{} us/tick)",
                 kModeName[static_cast<int>(mode)], down ? "press" : "release", window,
                 found ? chosen : 0, found ? (chosen == 0 ? "already safe" : "shifted") : "nothing survives",
-                sims, steps, us);
+                sims, steps, us, cpUs, static_cast<long long>(rewindUs),
+                steps > 0 ? static_cast<long long>((us - cpUs - rewindUs) / steps) : 0);
         }
 
         return found ? chosen : 0;
@@ -413,6 +424,16 @@ class $modify(IBLayer, GJBaseGameLayer) {
         auto player = playerFor(idx);
         Mode mode = modeOf(player);
         bool eligible = player && !player->m_isDashing && inputIsBuffered(mode, down);
+        // A press while standing on the ground in a landing mode always
+        // registers right away, so there is nothing to buffer: skip the
+        // simulation entirely (this is most cube clicks).
+        if (eligible && down && !isHoldMode(mode) && mode != Mode::Ufo
+            && (player->m_isOnGround || player->m_isOnGround2)) {
+            eligible = false;
+        }
+        if (eligible && mode == Mode::Robot && down && (player->m_isOnGround || player->m_isOnGround2)) {
+            eligible = false;
+        }
         auto pl = asPlayLayer();
         if (!eligible || !pl || pl->m_isPaused || m_playerDied) {
             inject(down, isPlayer1);
@@ -438,6 +459,7 @@ class $modify(IBLayer, GJBaseGameLayer) {
     }
 
     void clearBuffers() {
+        g_stallSeconds = 0.0;
         auto& f = m_fields;
         for (auto& s : f->slot) {
             s.queue.clear();
@@ -537,6 +559,14 @@ class $modify(IBLayer, GJBaseGameLayer) {
     }
 
     void update(float dt) {
+        // Time spent deciding a click was a frame stall. Take it out of this
+        // frame's delta so the game pauses for it instead of catching up with
+        // a visible jump.
+        if (g_stallSeconds > 0.0 && asPlayLayer() && !g_simulating) {
+            float comp = static_cast<float>(std::min<double>(g_stallSeconds, dt));
+            g_stallSeconds = std::max(0.0, g_stallSeconds - comp);
+            dt = std::max(0.f, dt - comp);
+        }
         int t = tps();
         if (g_simulating || t == kBaseTps || !asPlayLayer()) {
             GJBaseGameLayer::update(dt);
