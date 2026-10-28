@@ -1,3 +1,8 @@
+# v1.2.1
+- Fixed: the preview ghost never moved forward (2.2 moves the player in updateMove, not update), so it could never reach the hazard. This is the one that makes the buffer actually work.
+- A portal you are already inside no longer ends the preview early.
+- Each click is evaluated once instead of twice.
+
 # v1.2.0
 - Fixed: early clicks in cube/ball/spider were never shifted (the preview wrongly counted "landed on the ground" as safe).
 - Bigger windows: presets up to 120 ticks (half a second); per-mode windows up to 120. The look-ahead automatically extends past the window.
