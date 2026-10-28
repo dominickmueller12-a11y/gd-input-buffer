@@ -1,0 +1,226 @@
+{
+	"geode": "5.11.2",
+	"gd": {
+		"win": "2.2081",
+		"mac": "2.2081",
+		"android": "2.2081",
+		"ios": "2.2081"
+	},
+	"id": "dominick.input-buffer",
+	"name": "Input Buffer",
+	"version": "v1.0.0",
+	"developer": "Dominick",
+	"description": "Click a few ticks early and the click is moved to the tick where it actually works.",
+	"tags": ["gameplay", "utility", "cheat"],
+	"settings": {
+		"timing-help": {
+			"type": "title",
+			"name": "How to read the timing numbers",
+			"description": "Geometry Dash runs its physics at 240 ticks per second.\n\n1 tick = 1 frame at 240 FPS\n4 ticks = 1 frame at 60 FPS\n\nA window of N ticks means: if you click up to N ticks before the moment the click actually needed to happen, the mod holds your click and plays it on the tick that works. Click earlier than N ticks and it goes through unchanged, exactly like vanilla.\n\nIf you change Game Speed (TPS), windows are still measured in 240-TPS ticks so they mean the same amount of real time."
+		},
+		"main-window": {
+			"type": "string",
+			"name": "Main Buffer Window",
+			"description": "The default window for every gamemode. 'Off' turns the whole mod off. Every gamemode below set to -1 uses this value.",
+			"default": "4 ticks (1 frame)",
+			"one-of": [
+				"Off",
+				"2 ticks (0.5 frame)",
+				"4 ticks (1 frame)",
+				"8 ticks (2 frames)",
+				"12 ticks (3 frames)",
+				"16 ticks (4 frames)",
+				"24 ticks (6 frames)",
+				"32 ticks (8 frames)"
+			]
+		},
+
+		"landing-title": {
+			"type": "title",
+			"name": "Landing and orb modes",
+			"description": "Modes where a click is a single jump: cube, ball, robot, spider. A click a little before you land (or before you reach an orb) is moved to the landing / orb tick.\n\n-1 = use the Main Buffer Window\n0 = no buffering in this mode\n1 or more = custom window in ticks for this mode"
+		},
+		"cube-window": {
+			"type": "int",
+			"name": "Cube Window (ticks)",
+			"description": "-1 = use main window, 0 = off, otherwise ticks.",
+			"default": -1,
+			"min": -1,
+			"max": 64,
+			"control": { "arrows": true, "slider": false }
+		},
+		"ball-window": {
+			"type": "int",
+			"name": "Ball Window (ticks)",
+			"description": "-1 = use main window, 0 = off, otherwise ticks.",
+			"default": -1,
+			"min": -1,
+			"max": 64,
+			"control": { "arrows": true, "slider": false }
+		},
+		"robot-window": {
+			"type": "int",
+			"name": "Robot Window (ticks)",
+			"description": "-1 = use main window, 0 = off, otherwise ticks. Robot presses are simulated as held.",
+			"default": -1,
+			"min": -1,
+			"max": 64,
+			"control": { "arrows": true, "slider": false }
+		},
+		"spider-window": {
+			"type": "int",
+			"name": "Spider Window (ticks)",
+			"description": "-1 = use main window, 0 = off, otherwise ticks.",
+			"default": -1,
+			"min": -1,
+			"max": 64,
+			"control": { "arrows": true, "slider": false }
+		},
+
+		"flying-title": {
+			"type": "title",
+			"name": "Flying modes",
+			"description": "Modes where you hold to go up: ship, UFO, swing, wave. Presses that would crash are moved to the first tick that survives. In ship, swing and wave (Grid mode) releases are buffered the same way.\n\n-1 = use the Main Buffer Window\n0 = no buffering in this mode\n1 or more = custom window in ticks for this mode"
+		},
+		"ship-window": {
+			"type": "int",
+			"name": "Ship Window (ticks)",
+			"description": "-1 = use main window, 0 = off, otherwise ticks.",
+			"default": -1,
+			"min": -1,
+			"max": 64,
+			"control": { "arrows": true, "slider": false }
+		},
+		"ufo-window": {
+			"type": "int",
+			"name": "UFO Window (ticks)",
+			"description": "-1 = use main window, 0 = off, otherwise ticks.",
+			"default": -1,
+			"min": -1,
+			"max": 64,
+			"control": { "arrows": true, "slider": false }
+		},
+		"swing-window": {
+			"type": "int",
+			"name": "Swing Window (ticks)",
+			"description": "-1 = use main window, 0 = off, otherwise ticks.",
+			"default": -1,
+			"min": -1,
+			"max": 64,
+			"control": { "arrows": true, "slider": false }
+		},
+		"wave-window": {
+			"type": "int",
+			"name": "Wave Window (ticks)",
+			"description": "-1 = use main window, 0 = off, otherwise ticks.",
+			"default": -1,
+			"min": -1,
+			"max": 64,
+			"control": { "arrows": true, "slider": false }
+		},
+		"wave-mode": {
+			"type": "string",
+			"name": "Wave Mode",
+			"description": "Off: wave is never buffered.\nPress Only: only presses are moved to a surviving tick.\nGrid: presses AND releases are moved, so both corners of every wave zig-zag land on the tick that fits the gap.",
+			"default": "Grid (Press + Release)",
+			"one-of": ["Off", "Press Only", "Grid (Press + Release)"]
+		},
+
+		"hotkeys-title": {
+			"type": "title",
+			"name": "Hotkeys",
+			"description": "Press the key in game to change the setting without opening this menu. A small notification confirms the new value."
+		},
+		"key-cycle-window": {
+			"type": "keybind",
+			"name": "Key: Cycle Main Window",
+			"description": "Cycles the Main Buffer Window through Off and every preset.",
+			"default": "F6",
+			"category": "universal"
+		},
+		"key-tps-up": {
+			"type": "keybind",
+			"name": "Key: TPS Up",
+			"description": "Raises Game Speed (TPS) by 60.",
+			"default": "F7",
+			"category": "universal"
+		},
+		"key-tps-down": {
+			"type": "keybind",
+			"name": "Key: TPS Down",
+			"description": "Lowers Game Speed (TPS) by 60.",
+			"default": "F8",
+			"category": "universal"
+		},
+		"key-debug": {
+			"type": "keybind",
+			"name": "Key: Debug Logging",
+			"description": "Toggles Debug Logging.",
+			"default": "F9",
+			"category": "universal"
+		},
+		"key-cycle-wave": {
+			"type": "keybind",
+			"name": "Key: Cycle Wave Mode",
+			"description": "Cycles Wave Mode: Off -> Press Only -> Grid.",
+			"default": "F10",
+			"category": "universal"
+		},
+
+		"general-title": {
+			"type": "title",
+			"name": "General"
+		},
+		"tps": {
+			"type": "int",
+			"name": "Game Speed (TPS)",
+			"description": "Physics ticks per second. 240 is vanilla. Higher values run more, smaller physics steps per frame (like a physics bypass), which makes every window finer. Values other than 240 change how the game physics feel and are not accepted on most lists.",
+			"default": 240,
+			"min": 240,
+			"max": 1440,
+			"control": { "arrows": true, "arrow-step": 60, "big-arrows": true, "big-arrow-step": 240, "slider": false }
+		},
+		"look-ahead": {
+			"type": "int",
+			"name": "Look-ahead (ticks)",
+			"description": "How far into the future each click is checked for a death, in ticks (240 = 1 second). Higher catches deaths further away but costs more time per click. Lower this if clicks stutter.",
+			"default": 48,
+			"min": 16,
+			"max": 240,
+			"control": { "arrows": true, "arrow-step": 8, "slider": true, "slider-step": 8 }
+		},
+		"sim-budget": {
+			"type": "int",
+			"name": "Max simulated ticks per click",
+			"description": "Hard cap on simulation work for a single click so a click can never freeze the game. If the cap is reached before a surviving tick is found, the click goes through unchanged.",
+			"default": 1200,
+			"min": 100,
+			"max": 4000,
+			"control": { "arrows": true, "arrow-step": 100, "slider": true, "slider-step": 100 }
+		},
+		"buffer-releases": {
+			"type": "bool",
+			"name": "Buffer releases (ship / swing / robot)",
+			"description": "Also move releases that would crash you to the first tick that survives. Wave releases are controlled by Wave Mode.",
+			"default": true
+		},
+		"safe-mode": {
+			"type": "bool",
+			"name": "Safe Mode",
+			"description": "While the buffer is on, levels run in test mode so completions, percentages and stats are not saved. Keeps buffered runs off your profile and off leaderboards.",
+			"default": true
+		},
+		"show-label": {
+			"type": "bool",
+			"name": "Show status label",
+			"description": "Shows the current window, wave mode and TPS in the bottom-left corner while playing.",
+			"default": true
+		},
+		"debug-logging": {
+			"type": "bool",
+			"name": "Debug Logging",
+			"description": "Writes one line per decision to the Geode log (geode/logs): mode, window, chosen delay, how many simulations it took and how long it took.",
+			"default": false
+		}
+	}
+}
