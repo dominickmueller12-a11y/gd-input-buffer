@@ -193,6 +193,11 @@ bool g_simulating = false;    // a ghost preview is running
 bool g_simDied = false;       // the ghost died
 bool g_simHitPortal = false;  // the ghost reached something we don't simulate
 bool g_smart = true;          // ghost may use orbs / pads / gravity portals
+// The dt the game hands the player's own physics step. It is NOT seconds:
+// one 240-tick is 0.25 in these units, 60x the 1/240 that the layer's
+// processCommands gets. Stepping the ghost with seconds made it crawl
+// forward at 1/60 speed, so it never reached anything and never died.
+float g_playerDt = 0.25f;
 int g_simObjectsSeen = 0;     // objects the ghost's collision pass looked at (debug)
 int g_simKept = 0;            // objects actually handed to the collision code (debug)
 int g_simDeathCalls = 0;      // destroyPlayer calls seen during a preview (debug)
@@ -473,8 +478,7 @@ class $modify(IBLayer, GJBaseGameLayer) {
     }
 
     void stepGhost(PlayerObject* ghost, float dt) {
-        ghost->update(dt);      // physics: velocities, jumps, gravity
-        ghost->updateMove(dt);  // actually travel (2.2 moved this out of update)
+        ghost->update(dt);
         ghost->updateRotation(dt);
         ghost->m_collisionLogTop->removeAllObjects();
         ghost->m_collisionLogBottom->removeAllObjects();
@@ -495,8 +499,8 @@ class $modify(IBLayer, GJBaseGameLayer) {
         copyState(f->ghost1, m_player1);
         if (dual) copyState(f->ghost2, m_player2);
 
-        float dt = f->tickDt;
-        if (!(dt > 0.0005f && dt < 0.1f)) dt = 1.f / kBaseTps;
+        float dt = g_playerDt;
+        if (!(dt > 0.0001f && dt < 4.f)) dt = 0.25f;
 
         g_simulating = true;
         g_simDied = false;
@@ -1033,6 +1037,14 @@ class $modify(IBPlayerObject, PlayerObject) {
         (void)self.setHookPriority("PlayerObject::incrementJumps", Priority::FirstPre);
         (void)self.setHookPriority("PlayerObject::ringJump", Priority::FirstPre);
         (void)self.setHookPriority("PlayerObject::playSpiderDashEffect", Priority::FirstPre);
+    }
+
+    // Record the dt the game actually gives the player's physics, so the
+    // ghost is stepped in the same units and at the same rate, whatever
+    // the TPS setting is.
+    void update(float dt) {
+        if (!g_simulating && dt > 0.f && !isGhost(this)) g_playerDt = dt;
+        PlayerObject::update(dt);
     }
 
     void incrementJumps() {
