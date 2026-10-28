@@ -1,3 +1,8 @@
+# v1.3.0
+- Presses are no longer ignored (the game tags presses as player 2 on some setups; all inputs are handled now).
+- A jump from the ground is buffered too: clicking too early before a spike now delays the jump until it clears, which is the whole point.
+- Duplicate deliveries of the same input no longer cancel a delay.
+
 # v1.2.1
 - Fixed: the preview ghost never moved forward (2.2 moves the player in updateMove, not update), so it could never reach the hazard. This is the one that makes the buffer actually work.
 - A portal you are already inside no longer ends the preview early.
