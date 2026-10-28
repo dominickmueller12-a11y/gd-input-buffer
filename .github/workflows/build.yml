@@ -5,6 +5,8 @@ on:
   push:
     branches:
       - "**"
+    paths-ignore:
+      - "release/**"
 
 jobs:
   build:
@@ -31,6 +33,8 @@ jobs:
     name: Package builds
     runs-on: ubuntu-latest
     needs: ['build']
+    permissions:
+      contents: write
 
     steps:
       - uses: geode-sdk/build-geode-mod/combine@main
@@ -40,3 +44,18 @@ jobs:
         with:
           name: Build Output
           path: ${{ steps.build.outputs.build-output }}
+
+      - name: Publish the .geode file into the repo (release folder)
+        uses: actions/checkout@v4
+        with:
+          path: repo
+
+      - run: |
+          mkdir -p repo/release
+          cp "${{ steps.build.outputs.build-output }}"/*.geode repo/release/
+          cd repo
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add release
+          git commit -m "Add built mod [skip ci]" || exit 0
+          git push
