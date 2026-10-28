@@ -8,7 +8,7 @@
 	},
 	"id": "dominick.input-buffer",
 	"name": "Input Buffer",
-	"version": "v1.3.1",
+	"version": "v1.3.2",
 	"developer": "Dominick",
 	"description": "Click a few ticks early and the click is moved to the tick where it actually works.",
 	"tags": ["gameplay", "utility", "cheat"],
