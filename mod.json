@@ -8,7 +8,7 @@
 	},
 	"id": "dominick.input-buffer",
 	"name": "Input Buffer",
-	"version": "v1.1.1",
+	"version": "v1.2.0",
 	"developer": "Dominick",
 	"description": "Click a few ticks early and the click is moved to the tick where it actually works.",
 	"tags": ["gameplay", "utility", "cheat"],
@@ -31,7 +31,11 @@
 				"12 ticks (3 frames)",
 				"16 ticks (4 frames)",
 				"24 ticks (6 frames)",
-				"32 ticks (8 frames)"
+				"32 ticks (8 frames)",
+				"48 ticks (12 frames)",
+				"64 ticks (16 frames)",
+				"96 ticks (24 frames)",
+				"120 ticks (0.5 second)"
 			]
 		},
 
@@ -46,7 +50,7 @@
 			"description": "-1 = use main window, 0 = off, otherwise ticks.",
 			"default": -1,
 			"min": -1,
-			"max": 64,
+			"max": 120,
 			"control": { "arrows": true, "slider": false }
 		},
 		"ball-window": {
@@ -55,7 +59,7 @@
 			"description": "-1 = use main window, 0 = off, otherwise ticks.",
 			"default": -1,
 			"min": -1,
-			"max": 64,
+			"max": 120,
 			"control": { "arrows": true, "slider": false }
 		},
 		"robot-window": {
@@ -64,7 +68,7 @@
 			"description": "-1 = use main window, 0 = off, otherwise ticks. Robot presses are simulated as held.",
 			"default": -1,
 			"min": -1,
-			"max": 64,
+			"max": 120,
 			"control": { "arrows": true, "slider": false }
 		},
 		"spider-window": {
@@ -73,7 +77,7 @@
 			"description": "-1 = use main window, 0 = off, otherwise ticks.",
 			"default": -1,
 			"min": -1,
-			"max": 64,
+			"max": 120,
 			"control": { "arrows": true, "slider": false }
 		},
 
@@ -88,7 +92,7 @@
 			"description": "-1 = use main window, 0 = off, otherwise ticks.",
 			"default": -1,
 			"min": -1,
-			"max": 64,
+			"max": 120,
 			"control": { "arrows": true, "slider": false }
 		},
 		"ufo-window": {
@@ -97,7 +101,7 @@
 			"description": "-1 = use main window, 0 = off, otherwise ticks.",
 			"default": -1,
 			"min": -1,
-			"max": 64,
+			"max": 120,
 			"control": { "arrows": true, "slider": false }
 		},
 		"swing-window": {
@@ -106,7 +110,7 @@
 			"description": "-1 = use main window, 0 = off, otherwise ticks.",
 			"default": -1,
 			"min": -1,
-			"max": 64,
+			"max": 120,
 			"control": { "arrows": true, "slider": false }
 		},
 		"wave-window": {
@@ -115,7 +119,7 @@
 			"description": "-1 = use main window, 0 = off, otherwise ticks.",
 			"default": -1,
 			"min": -1,
-			"max": 64,
+			"max": 120,
 			"control": { "arrows": true, "slider": false }
 		},
 		"wave-mode": {
@@ -208,9 +212,9 @@
 			"type": "int",
 			"name": "Max simulated ticks per click",
 			"description": "Hard cap on simulation work for a single click so a click can never freeze the game. If the cap is reached before a surviving tick is found, the click goes through unchanged.",
-			"default": 1200,
+			"default": 4000,
 			"min": 100,
-			"max": 4000,
+			"max": 20000,
 			"control": { "arrows": true, "arrow-step": 100, "slider": true, "slider-step": 100 }
 		},
 		"buffer-releases": {

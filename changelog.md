@@ -1,3 +1,8 @@
+# v1.2.0
+- Fixed: early clicks in cube/ball/spider were never shifted (the preview wrongly counted "landed on the ground" as safe).
+- Bigger windows: presets up to 120 ticks (half a second); per-mode windows up to 120. The look-ahead automatically extends past the window.
+- Ghost copies position and velocity explicitly; debug line shows ghost vs. real position.
+
 # v1.1.0
 - New preview engine: a hidden ghost player is simulated instead of stepping and rewinding the whole level. Triggers, moving objects, the wave trail, music and other mods are no longer affected by the preview. Fixes fast-forwarding lava/clouds, 3 CPS per click and the disappearing wave trail.
 - New setting: "Preview uses orbs, pads and gravity portals".
