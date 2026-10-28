@@ -4,26 +4,26 @@
 //
 // How it works
 // ------------
-// Every jump press (and, in hold modes, release) that comes from the player is
-// intercepted before the game sees it. The mod saves the level state with the
-// game's own checkpoint system, then quietly runs the game's real physics a
-// short way into the future with the input placed 0, 1, 2 ... N ticks later.
-// It picks the smallest delay where you are still alive at the end of the
-// look-ahead, rewinds, and plays your input for real on that tick. If you were
-// too early even for the window, or the click was fine to begin with, the input
-// goes through unchanged, exactly like vanilla.
+// Every jump press (and, in flying modes, release) from the player is
+// intercepted before the game sees it. A hidden copy of the player (a "ghost")
+// is given the real player's exact state and run forward a short way with the
+// input placed 0, 1, 2 ... N ticks later, using the game's own player physics
+// and collision code against the level. The smallest delay where the ghost is
+// still alive at the end of the look-ahead wins; the real input is then played
+// on that tick. If the input was already fine, or nothing in the window
+// survives, it goes through unchanged, exactly like vanilla.
 //
-// Because the real game physics are used for the preview (triggers, moving
-// objects, orbs, portals, speed changes, dual mode, everything), there is no
-// approximate "ghost" that can disagree with the real player.
+// Only the ghost moves during the preview. The level itself (triggers, moving
+// objects, music, trail, counters, other mods) is never stepped or rewound.
 //
 // Every input that arrives while an earlier one is still waiting is shifted by
 // the same amount, so taps stay taps and holds keep their length.
 
 #include <Geode/Geode.hpp>
+#include <Geode/modify/EffectGameObject.hpp>
 #include <Geode/modify/FMODAudioEngine.hpp>
 #include <Geode/modify/GJBaseGameLayer.hpp>
-#include <Geode/modify/HardStreak.hpp>
+#include <Geode/modify/GameObject.hpp>
 #include <Geode/modify/PlayLayer.hpp>
 #include <Geode/modify/PlayerObject.hpp>
 #include <Geode/ui/Notification.hpp>
@@ -34,6 +34,7 @@
 #include <cstdlib>
 #include <deque>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 using namespace geode::prelude;
@@ -69,10 +70,14 @@ Mode modeOf(PlayerObject* p) {
     return Mode::Cube;
 }
 
-// In these modes the button is held, so a press is simulated as "held from now
-// on". In the others a press is a tap (released on the next tick).
+// In these modes the button is held. In the others a press is a tap.
 bool isHoldMode(Mode m) {
     return m == Mode::Ship || m == Mode::Wave || m == Mode::Swing || m == Mode::Robot;
+}
+
+// Modes where "safe" can't be decided by landing on the ground.
+bool isFlyingMode(Mode m) {
+    return m == Mode::Ship || m == Mode::Wave || m == Mode::Ufo || m == Mode::Swing;
 }
 
 // ---------------------------------------------------------------------------
@@ -177,15 +182,98 @@ void notify(std::string const& text) {
 }
 
 // ---------------------------------------------------------------------------
-// Simulation flags shared with the side-effect hooks below
+// Preview state shared with the sandbox hooks below
 // ---------------------------------------------------------------------------
 
-bool g_simulating = false;   // a look-ahead run is in progress
-bool g_busy = false;         // a decision (checkpoint / rewinds) is in progress
-bool g_simDied = false;      // the player died inside the look-ahead
-bool g_simCompleted = false; // the level was completed inside the look-ahead
-double g_stallSeconds = 0.0; // time spent deciding; removed from the next frame's delta
-                             // so the game pauses for it instead of catching up
+bool g_simulating = false;    // a ghost preview is running
+bool g_simDied = false;       // the ghost died
+bool g_simHitPortal = false;  // the ghost reached something we don't simulate
+bool g_smart = true;          // ghost may use orbs / pads / gravity portals
+double g_stallSeconds = 0.0;  // time spent deciding; removed from the next frame
+
+PlayerObject* g_ghost1 = nullptr;
+PlayerObject* g_ghost2 = nullptr;
+
+bool isGhost(PlayerObject* p) {
+    return p && (p == g_ghost1 || p == g_ghost2);
+}
+
+// Objects whose activation state the ghost changed during the preview; put
+// back exactly as they were afterwards.
+struct ObjSnapshot {
+    GameObject* object;
+    bool isActivated;
+    EffectGameObject* effect;
+    bool activated;
+    bool byP1;
+    bool byP2;
+};
+std::vector<ObjSnapshot> g_snapshots;
+std::unordered_set<GameObject*> g_simUsed;
+
+void snapshotObject(GameObject* object) {
+    if (!object || g_simUsed.contains(object)) return;
+    g_simUsed.insert(object);
+    ObjSnapshot s { object, object->m_isActivated, nullptr, false, false, false };
+    if (auto effect = typeinfo_cast<EffectGameObject*>(object)) {
+        s.effect = effect;
+        s.activated = effect->m_activated;
+        s.byP1 = effect->m_activatedByPlayer1;
+        s.byP2 = effect->m_activatedByPlayer2;
+    }
+    g_snapshots.push_back(s);
+}
+
+void restoreObjects() {
+    for (auto const& s : g_snapshots) {
+        s.object->m_isActivated = s.isActivated;
+        if (s.effect) {
+            s.effect->m_activated = s.activated;
+            s.effect->m_activatedByPlayer1 = s.byP1;
+            s.effect->m_activatedByPlayer2 = s.byP2;
+        }
+    }
+    g_snapshots.clear();
+    g_simUsed.clear();
+}
+
+// Object classes the ghost interacts with.
+constexpr uint64_t typeBit(GameObjectType type) {
+    return 1ull << static_cast<int>(type);
+}
+
+constexpr uint64_t kCollidingTypes =
+    typeBit(GameObjectType::Solid) | typeBit(GameObjectType::Hazard) | typeBit(GameObjectType::Slope) |
+    typeBit(GameObjectType::CollisionObject) | typeBit(GameObjectType::AnimatedHazard);
+
+constexpr uint64_t kInteractTypes =
+    typeBit(GameObjectType::YellowJumpPad) | typeBit(GameObjectType::PinkJumpPad) | typeBit(GameObjectType::RedJumpPad) |
+    typeBit(GameObjectType::GravityPad) | typeBit(GameObjectType::SpiderPad) | typeBit(GameObjectType::YellowJumpRing) |
+    typeBit(GameObjectType::PinkJumpRing) | typeBit(GameObjectType::RedJumpRing) | typeBit(GameObjectType::GravityRing) |
+    typeBit(GameObjectType::GreenRing) | typeBit(GameObjectType::DropRing) | typeBit(GameObjectType::CustomRing) |
+    typeBit(GameObjectType::DashRing) | typeBit(GameObjectType::GravityDashRing) | typeBit(GameObjectType::SpiderOrb) |
+    typeBit(GameObjectType::InverseGravityPortal) | typeBit(GameObjectType::NormalGravityPortal) |
+    typeBit(GameObjectType::GravityTogglePortal);
+
+// Portals that change too much to preview: reaching one ends the preview as safe.
+constexpr uint64_t kStopTypes =
+    typeBit(GameObjectType::ShipPortal) | typeBit(GameObjectType::CubePortal) | typeBit(GameObjectType::BallPortal) |
+    typeBit(GameObjectType::UfoPortal) | typeBit(GameObjectType::WavePortal) | typeBit(GameObjectType::RobotPortal) |
+    typeBit(GameObjectType::SpiderPortal) | typeBit(GameObjectType::SwingPortal) | typeBit(GameObjectType::DualPortal) |
+    typeBit(GameObjectType::SoloPortal) | typeBit(GameObjectType::RegularSizePortal) | typeBit(GameObjectType::MiniSizePortal) |
+    typeBit(GameObjectType::InverseMirrorPortal) | typeBit(GameObjectType::NormalMirrorPortal) |
+    typeBit(GameObjectType::TeleportPortal) | typeBit(GameObjectType::TeleportOrb);
+
+float speedPortalValue(int id) {
+    switch (id) {
+        case 200: return 0.7f;
+        case 201: return 0.9f;
+        case 202: return 1.1f;
+        case 203: return 1.3f;
+        case 1334: return 1.6f;
+        default: return 0.f;
+    }
+}
 
 struct StepArgs {
     float dt;
@@ -220,24 +308,50 @@ class $modify(IBLayer, GJBaseGameLayer) {
         Slot slot[2];
         std::vector<RawInput> pendingRaw; // inputs that arrived inside a physics step
         bool insideStep = false;
-        std::vector<StepArgs> framePattern; // how the game stepped last frame
-        std::vector<StepArgs> currentFrame;
-        size_t stepInFrame = 0;
-        double tpsAccum = 0.0;      // real time not yet turned into ticks
-        float tpsRealDelta = 0.f;   // this frame's delta for the visual update
-        bool tpsHide = false;       // true while running extra inner updates
+        float tickDt = 1.f / kBaseTps;    // dt of the last real physics step
+        int sinceInput = 999;             // ticks since the last real input
+        int rapid = 0;                    // consecutive fast inputs (wave spam)
+        double tpsAccum = 0.0;
+        float tpsRealDelta = 0.f;
+        bool tpsHide = false;
         CCLabelBMFont* label = nullptr;
+
+        // Ghosts live in a layer that is never added to the scene: cocos never
+        // draws or schedules them, so they cost nothing between clicks.
+        CCLayer* ghostLayer = nullptr;
+        PlayerObject* ghost1 = nullptr;
+        PlayerObject* ghost2 = nullptr;
+
+        ~Fields() { dropGhosts(); }
+
+        void dropGhosts() {
+            if (g_ghost1 == ghost1) g_ghost1 = nullptr;
+            if (g_ghost2 == ghost2) g_ghost2 = nullptr;
+            for (auto** g : { &ghost1, &ghost2 }) {
+                if (*g) {
+                    (*g)->removeFromParentAndCleanup(true);
+                    (*g)->release();
+                    *g = nullptr;
+                }
+            }
+            if (ghostLayer) {
+                ghostLayer->removeAllChildrenWithCleanup(true);
+                ghostLayer->release();
+                ghostLayer = nullptr;
+            }
+        }
     };
 
-    void setLabel(CCLabelBMFont* label) { m_fields->label = label; }
-
     static void onModify(auto& self) {
-        // Run AFTER every other mod's hook. Other mods then see the player's
-        // real input exactly once, and the inputs / ticks we inject for the
-        // preview go straight to the game without passing through their hooks
-        // (no inflated CPS counters, no "speedhack" false positives).
+        // Run after every other mod's hook: they see the player's real input
+        // exactly once, and the delayed input we play goes straight to the game.
         (void)self.setHookPriority("GJBaseGameLayer::handleButton", Priority::LastPre);
-        (void)self.setHookPriority("GJBaseGameLayer::processCommands", Priority::LastPre);
+        (void)self.setHookPriority("GJBaseGameLayer::collisionCheckObjects", Priority::FirstPre);
+        (void)self.setHookPriority("GJBaseGameLayer::canBeActivatedByPlayer", Priority::FirstPre);
+        (void)self.setHookPriority("GJBaseGameLayer::playerTouchedRing", Priority::FirstPre);
+        (void)self.setHookPriority("GJBaseGameLayer::flipGravity", Priority::FirstPre);
+        (void)self.setHookPriority("GJBaseGameLayer::gameEventTriggered", Priority::FirstPre);
+        (void)self.setHookPriority("GJBaseGameLayer::playerWillSwitchMode", Priority::FirstPre);
     }
 
     // ---- helpers ----------------------------------------------------------
@@ -251,6 +365,10 @@ class $modify(IBLayer, GJBaseGameLayer) {
         return m_levelSettings && m_levelSettings->m_twoPlayerMode;
     }
 
+    bool isDual() {
+        return m_gameState.m_isDualMode && m_player2;
+    }
+
     int slotFor(bool isPlayer1) {
         return (isTwoPlayer() && !isPlayer1) ? 1 : 0;
     }
@@ -259,101 +377,161 @@ class $modify(IBLayer, GJBaseGameLayer) {
         return (isTwoPlayer() && slot == 1) ? m_player2 : m_player1;
     }
 
-    StepArgs simArgs(size_t k) {
-        auto& pat = m_fields->framePattern;
-        if (pat.empty()) return { 1.f / kBaseTps, false, true };
-        return pat[(m_fields->stepInFrame + k) % pat.size()];
-    }
-
-    // One vanilla physics step, bypassing our own processCommands logic.
-    // Simulated steps are never "the last tick of a frame", which skips the
-    // once-per-frame visual work.
-    void rawStep(StepArgs const& a) {
-        GJBaseGameLayer::processCommands(a.dt, a.half, false);
-    }
+    void setLabel(CCLabelBMFont* label) { m_fields->label = label; }
+    void dropGhostsNow() { m_fields->dropGhosts(); }
 
     void inject(bool down, bool isPlayer1) {
         GJBaseGameLayer::handleButton(down, kJumpButton, isPlayer1);
     }
 
+    // ---- ghosts -----------------------------------------------------------
+
+    PlayerObject* makeGhost() {
+        auto& f = m_fields;
+        if (!f->ghostLayer) {
+            f->ghostLayer = CCLayer::create();
+            f->ghostLayer->retain();
+        }
+        auto ghost = PlayerObject::create(1, 1, this, f->ghostLayer, true);
+        ghost->retain();
+        ghost->setPosition({ 0.f, 105.f });
+        ghost->setVisible(false);
+        f->ghostLayer->addChild(ghost);
+        return ghost;
+    }
+
+    void ensureGhosts() {
+        auto& f = m_fields;
+        if (!f->ghost1) f->ghost1 = makeGhost();
+        if (!f->ghost2) f->ghost2 = makeGhost();
+        g_ghost1 = f->ghost1;
+        g_ghost2 = f->ghost2;
+    }
+
+    static void copyState(PlayerObject* ghost, PlayerObject* real) {
+        ghost->setVisible(false);
+        ghost->resetTouchedRings(true);
+        ghost->copyAttributes(real);
+        ghost->setScale(real->getScale());
+        ghost->setContentSize(real->getContentSize());
+        ghost->m_width = real->m_width;
+        ghost->m_height = real->m_height;
+        ghost->m_gravityMod = real->m_gravityMod;
+        ghost->m_isOnGround = real->m_isOnGround;
+        ghost->m_isUpsideDown = real->m_isUpsideDown;
+        ghost->m_vehicleSize = real->m_vehicleSize;
+        ghost->m_playerSpeed = real->m_playerSpeed;
+        ghost->m_isDashing = real->m_isDashing;
+        ghost->m_lastActivatedPortal = real->m_lastActivatedPortal;
+        // button / jump-buffer state, so the ghost reacts to the preview input
+        // exactly like the real player would
+        ghost->m_holdingButtons = real->m_holdingButtons;
+        ghost->m_jumpBuffered = real->m_jumpBuffered;
+        ghost->m_wasJumpBuffered = real->m_wasJumpBuffered;
+        ghost->m_stateJumpBuffered = real->m_stateJumpBuffered;
+        ghost->m_stateRingJump = real->m_stateRingJump;
+        ghost->m_stateRingJump2 = real->m_stateRingJump2;
+        ghost->m_wasRobotJump = real->m_wasRobotJump;
+        ghost->m_touchedRing = real->m_touchedRing;
+        ghost->m_touchedPad = real->m_touchedPad;
+        ghost->m_touchedGravityPortal = real->m_touchedGravityPortal;
+    }
+
+    static void pressGhost(PlayerObject* ghost, bool down) {
+        if (down) ghost->pushButton(PlayerButton::Jump);
+        else ghost->releaseButton(PlayerButton::Jump);
+    }
+
+    void stepGhost(PlayerObject* ghost, float dt) {
+        ghost->update(dt);
+        ghost->updateRotation(dt);
+        ghost->m_collisionLogTop->removeAllObjects();
+        ghost->m_collisionLogBottom->removeAllObjects();
+        ghost->m_collisionLogLeft->removeAllObjects();
+        ghost->m_collisionLogRight->removeAllObjects();
+        this->checkCollisions(ghost, dt, false);
+    }
+
     // ---- look-ahead -------------------------------------------------------
 
-    // Place the input `delay` steps from now and run `horizon` steps.
-    // True if the player is still alive afterwards.
-    // The player's input is modelled as a gesture: the input itself, then the
-    // opposite input `gesture` ticks later (a tap for landing modes, a short
-    // hold / short release for flying modes). Without the opposite input the
-    // preview would think every wave release falls into the floor and every
-    // ship press flies into the ceiling, and shift inputs that were fine.
-    bool survives(int delay, bool down, bool isPlayer1, int gesture, int horizon, int& stepsUsed) {
-        g_simDied = false;
-        g_simCompleted = false;
+    // The input is modelled as a gesture: the input itself, then the opposite
+    // input `gesture` ticks later (a tap for landing modes, a short hold /
+    // short release for flying modes).
+    // True if the ghost is still alive after `horizon` ticks.
+    bool survives(int delay, bool down, int gesture, int horizon, bool flying, int& stepsUsed) {
+        auto& f = m_fields;
+        bool dual = isDual();
+        copyState(f->ghost1, m_player1);
+        if (dual) copyState(f->ghost2, m_player2);
+
+        float dt = f->tickDt;
+        if (!(dt > 0.0005f && dt < 0.1f)) dt = 1.f / kBaseTps;
+
         g_simulating = true;
+        g_simDied = false;
+        g_simHitPortal = false;
+
+        bool safe = false;
+        int airTicks = 0, groundTicks = 0;
+
         for (int k = 0; k < horizon; ++k) {
-            if (k == delay) inject(down, isPlayer1);
-            if (k == delay + gesture) inject(!down, isPlayer1);
-            rawStep(simArgs(k));
+            if (k == delay) {
+                pressGhost(f->ghost1, down);
+                if (dual) pressGhost(f->ghost2, down);
+            }
+            if (k == delay + gesture) {
+                pressGhost(f->ghost1, !down);
+                if (dual) pressGhost(f->ghost2, !down);
+            }
+            stepGhost(f->ghost1, dt);
+            if (!g_simDied && dual) stepGhost(f->ghost2, dt);
             ++stepsUsed;
-            if (g_simDied || g_simCompleted) break;
+            if (g_simDied) break;
+            if (g_simHitPortal) { safe = true; break; }
+
+            // Landing modes: once the ghost has been in the air and then sat on
+            // the ground for a few ticks after the input, the jump worked.
+            if (!flying && k > delay + gesture) {
+                bool grounded = f->ghost1->m_isOnGround && (!dual || f->ghost2->m_isOnGround);
+                if (!grounded) { ++airTicks; groundTicks = 0; }
+                else if (airTicks >= 6 && ++groundTicks > 2) { safe = true; break; }
+            }
         }
+
         g_simulating = false;
-        return !g_simDied;
+        restoreObjects();
+        return safe || !g_simDied;
     }
 
     // Decide how many steps to hold this input back. 0 = play it now.
-    int chooseDelay(bool down, bool isPlayer1, Mode mode) {
+    int chooseDelay(bool down, Mode mode) {
         auto pl = asPlayLayer();
-        if (!pl || m_playerDied) return 0;
+        if (!pl || m_playerDied || !m_player1) return 0;
+        ensureGhosts();
 
         int window = scaleTicks(windowBaseTicks(mode));
         if (window <= 0) return 0;
         int horizon = scaleTicks(static_cast<int>(setting<int64_t>("look-ahead")));
         int budget = static_cast<int>(setting<int64_t>("sim-budget"));
-        // taps release on the next tick; holds last "hold-length" ticks
         int gesture = isHoldMode(mode)
             ? std::max(1, scaleTicks(static_cast<int>(setting<int64_t>("hold-length"))))
             : 1;
+        bool flying = isFlyingMode(mode);
+        g_smart = setting<bool>("simulate-interactables");
 
         auto t0 = std::chrono::steady_clock::now();
+        int sims = 0, steps = 0;
 
-        // Anything the game does with buttons while we save / rewind must not
-        // come back into the buffer.
-        struct BusyGuard { BusyGuard() { g_busy = true; } ~BusyGuard() { g_busy = false; } } busy;
-
-        auto checkpoint = pl->createCheckpoint();
-        if (!checkpoint) return 0;
-        checkpoint->retain();
-        auto tCheckpoint = std::chrono::steady_clock::now();
-        double rewindUs = 0.0;
-
-        auto savedQueue = m_queuedButtons;
-        bool savedDied = m_playerDied;
-
-        int sims = 0;
-        int steps = 0;
-
-        auto rewind = [&]() {
-            auto r0 = std::chrono::steady_clock::now();
-            pl->loadFromCheckpoint(checkpoint);
-            m_queuedButtons = savedQueue;
-            m_playerDied = savedDied;
-            rewindUs += std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - r0).count();
-        };
-
-        // Runs one candidate. Returns false (dead) when out of budget so the
-        // search gives up instead of freezing the game.
         auto alive = [&](int d) -> bool {
             if (steps + horizon + d > budget) return false;
-            if (sims > 0) rewind();
             ++sims;
-            return survives(d, down, isPlayer1, gesture, horizon + d, steps);
+            return survives(d, down, gesture, horizon + d, flying, steps);
         };
 
         int chosen = 0;
         bool found = false;
 
         if (alive(0)) {
-            // The input is fine as it is.
             found = true;
             chosen = 0;
         }
@@ -370,9 +548,7 @@ class $modify(IBLayer, GJBaseGameLayer) {
             chosen = hi;
         }
         else {
-            // Neither end survives (for example the window is so long that the
-            // end of it is already past the gap). Coarse scan, then refine
-            // downward to the first surviving tick of that run.
+            // Neither end survives: coarse scan, then refine downward.
             int stride = std::max(1, window / 8);
             for (int d = stride; d < window; d += stride) {
                 if (alive(d)) {
@@ -389,21 +565,14 @@ class $modify(IBLayer, GJBaseGameLayer) {
             }
         }
 
-        rewind();
-        checkpoint->release();
-
-        auto t1 = std::chrono::steady_clock::now();
-        double totalSec = std::chrono::duration<double>(t1 - t0).count();
+        double totalSec = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
         g_stallSeconds += totalSec;
 
         if (debugLogging()) {
-            auto us = static_cast<long long>(totalSec * 1e6);
-            auto cpUs = std::chrono::duration_cast<std::chrono::microseconds>(tCheckpoint - t0).count();
-            log::info("[InputBuffer] {} {} | window {}t | delay {} ({}) | {} sims, {} ticks | {} us total (checkpoint {} us, rewinds {} us, ~{} us/tick)",
+            log::info("[InputBuffer] {} {} | window {}t | delay {} ({}) | {} sims, {} ticks, {} us",
                 kModeName[static_cast<int>(mode)], down ? "press" : "release", window,
                 found ? chosen : 0, found ? (chosen == 0 ? "already safe" : "shifted") : "nothing survives",
-                sims, steps, us, cpUs, static_cast<long long>(rewindUs),
-                steps > 0 ? static_cast<long long>((us - cpUs - rewindUs) / steps) : 0);
+                sims, steps, static_cast<long long>(totalSec * 1e6));
         }
 
         return found ? chosen : 0;
@@ -414,7 +583,6 @@ class $modify(IBLayer, GJBaseGameLayer) {
     void enqueue(Slot& s, bool down, bool isPlayer1, int ticks) {
         if (!s.queue.empty()) {
             auto& back = s.queue.back();
-            // keep order, and never put a release on the same tick as its press
             ticks = std::max(ticks, back.ticksLeft);
             if (back.down && !down && ticks == back.ticksLeft) ticks = back.ticksLeft + 1;
         }
@@ -423,35 +591,49 @@ class $modify(IBLayer, GJBaseGameLayer) {
 
     // A real input from the player, handled outside a physics step.
     void processRaw(bool down, bool isPlayer1) {
+        auto& f = m_fields;
         int idx = slotFor(isPlayer1);
-        auto& s = m_fields->slot[idx];
+        auto& s = f->slot[idx];
 
         // Something earlier is still waiting: shift this one by the same amount.
         if (!s.queue.empty()) {
             enqueue(s, down, isPlayer1, s.shift);
+            f->sinceInput = 0;
             return;
         }
 
         auto player = playerFor(idx);
         Mode mode = modeOf(player);
         bool eligible = player && !player->m_isDashing && inputIsBuffered(mode, down);
+
         // A press while standing on the ground in a landing mode always
-        // registers right away, so there is nothing to buffer: skip the
-        // simulation entirely (this is most cube clicks).
-        if (eligible && down && !isHoldMode(mode) && mode != Mode::Ufo
-            && (player->m_isOnGround || player->m_isOnGround2)) {
+        // registers right away: nothing to buffer.
+        if (eligible && down && !isFlyingMode(mode) && (player->m_isOnGround || player->m_isOnGround2)) {
             eligible = false;
         }
-        if (eligible && mode == Mode::Robot && down && (player->m_isOnGround || player->m_isOnGround2)) {
-            eligible = false;
+
+        // Fast spam (wave): don't fight the player's rhythm.
+        if (f->sinceInput < 8) {
+            if (++f->rapid >= 3) eligible = false;
         }
+        else {
+            f->rapid = 0;
+        }
+        f->sinceInput = 0;
+
+        // In 2-player mode each player has their own buffer; in dual mode
+        // both players follow player 1's input.
+        if (isTwoPlayer() && !isPlayer1) {
+            eligible = false; // keep player 2 vanilla in 2-player levels
+        }
+
         auto pl = asPlayLayer();
         if (!eligible || !pl || pl->m_isPaused || m_playerDied) {
             inject(down, isPlayer1);
             return;
         }
 
-        int d = chooseDelay(down, isPlayer1, mode);
+        int d = chooseDelay(down, mode);
         if (d <= 0) {
             inject(down, isPlayer1);
             return;
@@ -477,6 +659,8 @@ class $modify(IBLayer, GJBaseGameLayer) {
             s.shift = 0;
         }
         f->pendingRaw.clear();
+        f->sinceInput = 999;
+        f->rapid = 0;
     }
 
     // ---- status label -----------------------------------------------------
@@ -489,10 +673,10 @@ class $modify(IBLayer, GJBaseGameLayer) {
         if (show) f->label->setString(statusText().c_str());
     }
 
-    // ---- hooks ------------------------------------------------------------
+    // ---- input hooks ------------------------------------------------------
 
     void handleButton(bool down, int button, bool isPlayer1) {
-        if (g_simulating || g_busy || button != kJumpButton || !asPlayLayer()) {
+        if (g_simulating || button != kJumpButton || !asPlayLayer()) {
             GJBaseGameLayer::handleButton(down, button, isPlayer1);
             return;
         }
@@ -501,7 +685,7 @@ class $modify(IBLayer, GJBaseGameLayer) {
             return;
         }
         if (m_fields->insideStep) {
-            // Can't rewind in the middle of a step: decide right after it ends.
+            // Decide right after the current step ends.
             m_fields->pendingRaw.push_back({ down, isPlayer1 });
             return;
         }
@@ -509,27 +693,20 @@ class $modify(IBLayer, GJBaseGameLayer) {
     }
 
     void processCommands(float dt, bool isHalfTick, bool isLastTick) {
-        if (g_simulating || g_busy || !asPlayLayer()) {
+        if (g_simulating || !asPlayLayer()) {
             GJBaseGameLayer::processCommands(dt, isHalfTick, isLastTick);
             return;
         }
 
         auto& f = m_fields;
-
-        // Remember how the game steps so simulations step the same way.
-        f->currentFrame.push_back({ dt, isHalfTick, isLastTick });
-        if (isLastTick) {
-            f->framePattern = f->currentFrame;
-            f->currentFrame.clear();
-        }
+        if (dt > 0.f) f->tickDt = dt;
+        if (f->sinceInput < 998) ++f->sinceInput;
 
         for (auto& s : f->slot) fireDue(s);
 
         f->insideStep = true;
         GJBaseGameLayer::processCommands(dt, isHalfTick, isLastTick);
         f->insideStep = false;
-
-        f->stepInFrame = isLastTick ? 0 : f->stepInFrame + 1;
 
         for (auto& s : f->slot) {
             for (auto& q : s.queue) --q.ticksLeft;
@@ -542,12 +719,89 @@ class $modify(IBLayer, GJBaseGameLayer) {
         }
     }
 
+    // ---- sandbox: the ghost may only touch what we allow -------------------
+
+    // The ghost collides with solids and hazards, may use orbs / pads /
+    // gravity portals (restored afterwards), reacts to speed portals, and
+    // stops at portals that change too much to preview.
+    void collisionCheckObjects(PlayerObject* player, gd::vector<GameObject*>* objects, int objectCount, float dt) {
+        if (!g_simulating || !isGhost(player)) {
+            GJBaseGameLayer::collisionCheckObjects(player, objects, objectCount, dt);
+            return;
+        }
+        static gd::vector<GameObject*> relevant;
+        relevant.clear();
+        if (static_cast<int>(relevant.capacity()) < objectCount) relevant.reserve(objectCount);
+
+        uint64_t keep = g_smart ? (kCollidingTypes | kInteractTypes) : kCollidingTypes;
+        bool haveRect = false;
+        CCRect ghostRect;
+        auto& list = *objects;
+        for (int i = 0; i < objectCount; ++i) {
+            auto object = list[i];
+            if (!object) continue;
+            auto type = static_cast<unsigned>(object->m_objectType);
+            uint64_t bit = type < 64 ? (1ull << type) : 0;
+            if (keep & bit) {
+                relevant.push_back(object);
+                continue;
+            }
+            bool stop = (kStopTypes & bit) != 0;
+            float speed = stop ? 0.f : speedPortalValue(object->m_objectID);
+            if (!stop && speed <= 0.f) continue;
+            if (!haveRect) {
+                ghostRect = player->getObjectRect();
+                haveRect = true;
+            }
+            if (ghostRect.intersectsRect(object->getObjectRect())) {
+                if (stop) g_simHitPortal = true;
+                else player->m_playerSpeed = speed;
+            }
+        }
+        GJBaseGameLayer::collisionCheckObjects(player, &relevant, static_cast<int>(relevant.size()), dt);
+    }
+
+    bool canBeActivatedByPlayer(PlayerObject* player, EffectGameObject* object) {
+        if (g_simulating) {
+            if (!g_smart || !isGhost(player) || !object || g_simUsed.contains(object)) return false;
+            snapshotObject(object);
+            return true;
+        }
+        return GJBaseGameLayer::canBeActivatedByPlayer(player, object);
+    }
+
+    void playerTouchedRing(PlayerObject* player, RingObject* ring) {
+        if (g_simulating) {
+            if (!g_smart || !isGhost(player)) return;
+            snapshotObject(ring);
+        }
+        GJBaseGameLayer::playerTouchedRing(player, ring);
+    }
+
+    void flipGravity(PlayerObject* player, bool flip, bool noEffects) {
+        if (g_simulating) {
+            if (g_smart && isGhost(player)) player->flipGravity(flip, true);
+            return;
+        }
+        GJBaseGameLayer::flipGravity(player, flip, noEffects);
+    }
+
+    void gameEventTriggered(GJGameEvent event, int material, int playerID) {
+        if (g_simulating) return;
+        GJBaseGameLayer::gameEventTriggered(event, material, playerID);
+    }
+
+    void playerWillSwitchMode(PlayerObject* player, GameObject* object) {
+        if (g_simulating) {
+            g_simHitPortal = true;
+            return;
+        }
+        GJBaseGameLayer::playerWillSwitchMode(player, object);
+    }
+
     // ---- Game Speed (TPS) -------------------------------------------------
-    // Same approach as the well-known "physics bypass" hacks: the game's delta
-    // quantiser is re-implemented with our tick length instead of 1/240, and
-    // update() is called several times per frame with that tick length. The
-    // once-per-frame work (postUpdate: camera, visibility, labels) only runs on
-    // the last call. At 240 TPS nothing is touched.
+    // Same approach as the well-known "physics bypass" hacks. At 240 TPS
+    // nothing is touched.
 
     double customDelta(float dt, double tpsValue, bool applyExtra) {
         double spt = 1.0 / tpsValue;
@@ -571,8 +825,7 @@ class $modify(IBLayer, GJBaseGameLayer) {
 
     void update(float dt) {
         // Time spent deciding a click was a frame stall. Take it out of this
-        // frame's delta so the game pauses for it instead of catching up with
-        // a visible jump.
+        // frame's delta so the game pauses for it instead of catching up.
         if (g_stallSeconds > 0.0 && asPlayLayer() && !g_simulating) {
             float comp = static_cast<float>(std::min<double>(g_stallSeconds, dt));
             g_stallSeconds = std::max(0.0, g_stallSeconds - comp);
@@ -600,8 +853,6 @@ class $modify(IBLayer, GJBaseGameLayer) {
         while (steps > 1) {
             GJBaseGameLayer::update(static_cast<float>(tick));
             --steps;
-            // If updating takes longer than a frame, stop and lump the rest
-            // into the final call so the game can't spiral.
             if (std::chrono::steady_clock::now() - start > frameBudget) break;
         }
         f->tpsHide = false;
@@ -611,23 +862,18 @@ class $modify(IBLayer, GJBaseGameLayer) {
     bool tpsHiding() { return m_fields->tpsHide; }
     float realFrameDelta() { return m_fields->tpsRealDelta; }
 
-    // 2.2 levels measure progress in 240-TPS ticks. At another tick rate the
-    // counters run too fast, so they are rebuilt from the level time around the
-    // calls that read them.
     unsigned int ticksAt240() {
         return static_cast<unsigned int>(std::lround(m_gameState.m_levelTime * kBaseTps));
     }
 };
 
 // ---------------------------------------------------------------------------
-// PlayLayer: deaths, completion, resets, safe mode, status label
+// PlayLayer: ghost deaths, resets, safe mode, status label
 // ---------------------------------------------------------------------------
 
 class $modify(IBPlayLayer, PlayLayer) {
     static void onModify(auto& self) {
-        // Simulated deaths must be caught before any other mod sees them.
         (void)self.setHookPriority("PlayLayer::destroyPlayer", Priority::FirstPre);
-        (void)self.setHookPriority("PlayLayer::levelComplete", Priority::FirstPre);
         (void)self.setHookPriority("PlayLayer::playEndAnimationToPos", Priority::FirstPre);
     }
 
@@ -659,8 +905,9 @@ class $modify(IBPlayLayer, PlayLayer) {
 
     void destroyPlayer(PlayerObject* player, GameObject* object) {
         if (g_simulating) {
-            // The hidden anti-cheat spike is not a real death.
-            if (object != m_anticheatSpike) g_simDied = true;
+            // Only the ghost may die in a preview; the anti-cheat spike is not
+            // a real death.
+            if (isGhost(player) && object != m_anticheatSpike) g_simDied = true;
             return;
         }
         engine()->clearBuffers();
@@ -675,15 +922,11 @@ class $modify(IBPlayLayer, PlayLayer) {
     }
 
     void levelComplete() {
-        if (g_simulating) {
-            g_simCompleted = true;
-            return;
-        }
+        if (g_simulating) return;
         if (!tpsActive()) {
             PlayLayer::levelComplete();
             return;
         }
-        // levelComplete stores the tick count as the completion timestamp.
         auto saved = m_gameState.m_commandIndex;
         m_gameState.m_commandIndex = engine()->ticksAt240();
         PlayLayer::levelComplete();
@@ -701,7 +944,6 @@ class $modify(IBPlayLayer, PlayLayer) {
         m_gameState.m_currentProgress = saved;
     }
 
-    // Camera, visibility and labels: once per rendered frame, not once per tick.
     void postUpdate(float dt) {
         if (!tpsActive()) {
             PlayLayer::postUpdate(dt);
@@ -720,79 +962,64 @@ class $modify(IBPlayLayer, PlayLayer) {
         engine()->clearBuffers();
         PlayLayer::resetLevel();
     }
+
+    void onQuit() {
+        engine()->clearBuffers();
+        engine()->dropGhostsNow();
+        PlayLayer::onQuit();
+    }
 };
 
 // ---------------------------------------------------------------------------
-// Side effects that must not leak out of a simulated step
+// Side effects the ghost must not cause
 // ---------------------------------------------------------------------------
 
 class $modify(IBPlayerObject, PlayerObject) {
     static void onModify(auto& self) {
         (void)self.setHookPriority("PlayerObject::incrementJumps", Priority::FirstPre);
-        (void)self.setHookPriority("PlayerObject::playSpawnEffect", Priority::FirstPre);
+        (void)self.setHookPriority("PlayerObject::ringJump", Priority::FirstPre);
+        (void)self.setHookPriority("PlayerObject::playSpiderDashEffect", Priority::FirstPre);
     }
 
     void incrementJumps() {
-        if (g_simulating) return; // don't count simulated jumps in stats
+        if (g_simulating) return; // ghost jumps don't count in stats
         PlayerObject::incrementJumps();
     }
 
-    void playSpawnEffect() {
+    void ringJump(RingObject* ring, bool skipCheck) {
+        if (g_simulating) {
+            if (!g_smart || !isGhost(this)) return;
+            snapshotObject(ring);
+        }
+        PlayerObject::ringJump(ring, skipCheck);
+    }
+
+    void playSpiderDashEffect(CCPoint from, CCPoint to) {
         if (g_simulating) return;
-        PlayerObject::playSpawnEffect();
+        PlayerObject::playSpiderDashEffect(from, to);
     }
 };
 
-class $modify(IBHardStreak, HardStreak) {
-    void addPoint(CCPoint point) {
-        if (g_simulating) return; // no duplicate wave trail from the preview
-        HardStreak::addPoint(point);
+class $modify(IBEffectObject, EffectGameObject) {
+    void triggerObject(GJBaseGameLayer* layer, int uniqueID, gd::vector<int> const* remapKeys) {
+        if (g_simulating) return; // the ghost never fires triggers
+        EffectGameObject::triggerObject(layer, uniqueID, remapKeys);
     }
 };
 
-// Saving / rewinding a checkpoint re-seeks the music; FMOD seeks can block for
-// tens of milliseconds, and they are pointless because we restore the exact
-// same state. Skip all music work while a decision is in progress.
-class $modify(IBAudioLayer, GJBaseGameLayer) {
-    void resetAudio() {
-        if (g_busy) return;
-        GJBaseGameLayer::resetAudio();
-    }
-    void updateTimeWarp(float timeWarp) {
-        if (g_busy) return;
-        GJBaseGameLayer::updateTimeWarp(timeWarp);
-    }
-};
-
-class $modify(IBAudioPlay, PlayLayer) {
-    void startMusic() {
-        if (g_busy) return;
-        PlayLayer::startMusic();
-    }
-    void prepareMusic(bool dontWait) {
-        if (g_busy) return;
-        PlayLayer::prepareMusic(dontWait);
+class $modify(IBGameObject, GameObject) {
+    void playShineEffect() {
+        if (g_simulating) return;
+        GameObject::playShineEffect();
     }
 };
 
 class $modify(IBAudio, FMODAudioEngine) {
-    void setMusicTimeMS(unsigned int time, bool dontWait, int musicID) {
-        if (g_busy) return;
-        FMODAudioEngine::setMusicTimeMS(time, dontWait, musicID);
-    }
-    void fadeInMusic(float duration, int channel) {
-        if (g_busy) return;
-        FMODAudioEngine::fadeInMusic(duration, channel);
-    }
-    void fadeOutMusic(float duration, int channel) {
-        if (g_busy) return;
-        FMODAudioEngine::fadeOutMusic(duration, channel);
-    }
     int playEffectAdvanced(gd::string path, float speed, float p3, float volume, float pitch,
                            bool fft, bool reverb, int startMillis, int endMillis, int fadeIn,
                            int fadeOut, bool loop, int effectID, bool overrideSound, bool noPreload,
                            int channelID, int uniqueID, float minInterval, int sfxGroup) {
-        if (g_busy) return 0; // no sound effects from the preview
+        if (g_simulating) return 0; // no sound effects from the preview
         return FMODAudioEngine::playEffectAdvanced(path, speed, p3, volume, pitch, fft, reverb,
             startMillis, endMillis, fadeIn, fadeOut, loop, effectID, overrideSound, noPreload,
             channelID, uniqueID, minInterval, sfxGroup);
@@ -854,7 +1081,6 @@ $on_mod(Loaded) {
         if (down && !repeat) toggleDebug();
     });
 
-    // Keep the on-screen label in sync however a setting gets changed.
     listenForSettingChanges<std::string_view>("main-window", [](std::string_view) { refreshLiveLabel(); });
     listenForSettingChanges<std::string_view>("wave-mode", [](std::string_view) { refreshLiveLabel(); });
     listenForSettingChanges<int64_t>("tps", [](int64_t) { refreshLiveLabel(); });
