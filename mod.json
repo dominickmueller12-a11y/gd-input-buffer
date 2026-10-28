@@ -8,7 +8,7 @@
 	},
 	"id": "dominick.input-buffer",
 	"name": "Input Buffer",
-	"version": "v1.0.2",
+	"version": "v1.0.3",
 	"developer": "Dominick",
 	"description": "Click a few ticks early and the click is moved to the tick where it actually works.",
 	"tags": ["gameplay", "utility", "cheat"],
@@ -188,6 +188,15 @@
 			"min": 16,
 			"max": 240,
 			"control": { "arrows": true, "arrow-step": 8, "slider": true, "slider-step": 8 }
+		},
+		"hold-length": {
+			"type": "int",
+			"name": "Assumed hold length (ticks)",
+			"description": "Flying modes only. The preview assumes a press is held this many ticks and then released, and a release is followed by a re-press this many ticks later. Lower if you tap very fast (wave spam), higher if you hold longer. 240 ticks = 1 second.",
+			"default": 10,
+			"min": 2,
+			"max": 48,
+			"control": { "arrows": true, "arrow-step": 2, "slider": true, "slider-step": 2 }
 		},
 		"sim-budget": {
 			"type": "int",
