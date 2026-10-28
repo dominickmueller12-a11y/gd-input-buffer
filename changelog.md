@@ -1,3 +1,8 @@
+# v1.6.0
+- The real fix for early clicks in cube, ball, robot and spider: a press in mid-air is not dangerous, it is thrown away by the game, so the old "does pressing now kill me?" test answered "no" and fired it into the void. The mod now asks when the press would actually do something (land, orb, pad) and holds it to that tick.
+- The safety check for a held press uses a short horizon instead of the full look-ahead. Requiring survival for a whole second with no further clicks is something real gameplay never does, and it was the reason 59% of clicks fell back to vanilla with "nothing survives".
+- Log reasons are now "works now", "held to landing", "landing unsafe" and "no landing in window".
+
 # v1.3.0
 - Presses are no longer ignored (the game tags presses as player 2 on some setups; all inputs are handled now).
 - A jump from the ground is buffered too: clicking too early before a spike now delays the jump until it clears, which is the whole point.
