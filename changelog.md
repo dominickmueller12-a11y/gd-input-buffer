@@ -1,3 +1,9 @@
+# v1.7.0
+- The "does this press do anything" test no longer trusts m_isOnGround, m_touchedRing or m_touchedPad. Those read true while the player is falling, so every single cube press answered "works now" after zero simulated ticks and went straight through - v1.6.0 changed nothing for that reason.
+- Instead the mod runs the ghost once with no input at all, then asks whether pressing on a given tick moves it off that path. A press the game throws away leaves the path untouched, which is the thing worth detecting, and it cannot be fooled by a stale flag.
+- The first tick that does something is found by binary search, with a sweep afterwards for orbs and pads, which are only live for a few ticks.
+- The decision log now records eff, the raw ground/ring/pad flags and the baseline length.
+
 # v1.6.0
 - The real fix for early clicks in cube, ball, robot and spider: a press in mid-air is not dangerous, it is thrown away by the game, so the old "does pressing now kill me?" test answered "no" and fired it into the void. The mod now asks when the press would actually do something (land, orb, pad) and holds it to that tick.
 - The safety check for a held press uses a short horizon instead of the full look-ahead. Requiring survival for a whole second with no further clicks is something real gameplay never does, and it was the reason 59% of clicks fell back to vanilla with "nothing survives".
