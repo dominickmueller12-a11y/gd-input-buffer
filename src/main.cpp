@@ -158,6 +158,17 @@ int windowBaseTicks(Mode m) {
     return v;
 }
 
+// Is the player moving against gravity right now? A jump, an orb or a pad is
+// the only thing that can start that, so the moment it turns true is the tick
+// the game spent the press on. This is a sign test on purpose: the earlier
+// version compared y-velocity between frames against a threshold, and plain
+// free-fall crosses it in one 60fps frame (four physics ticks), so every press
+// looked spent immediately and nothing was ever held.
+bool movingAgainstGravity(PlayerObject* p) {
+    float sign = p->m_isUpsideDown ? -1.f : 1.f;
+    return p->m_yVelocity * sign > 0.1f;
+}
+
 // Simple mode holds the real button down instead of predicting anything. GD
 // already jumps the instant you land while the button is held, so the game
 // decides the timing and no simulation can get it wrong.
@@ -350,8 +361,9 @@ struct Slot {
     bool holdIsP1 = true;     // which player the held press belongs to
     int heldTicks = 0;        // ticks held so far
     int holdLimit = 0;        // give up and release after this many
-    float lastYVel = 0.f;     // to spot the jump on the tick it happens
-    bool haveYVel = false;
+    bool minHoldOnly = false; // flying modes: just stretch the tap, don't wait
+    bool sawFall = false;     // the player has been moving with gravity since
+    bool upsideAtPress = false;
 };
 
 } // namespace
@@ -919,26 +931,35 @@ class $modify(IBLayer, GJBaseGameLayer) {
         // a few ticks too long flies you into the ceiling. A click there is
         // never wasted in the first place, so there is nothing to buffer.
         if (simpleMode()) {
-            if (isFlyingMode(mode)) {
-                if (debugLogging()) {
-                    log::info("[InputBuffer] simple: {} {} passthrough (flying mode)",
-                        kModeName[static_cast<int>(mode)], down ? "press" : "release");
-                }
-                inject(down, isPlayer1);
-                return;
-            }
             if (down) {
+                // A new press while we are still sitting on the last release:
+                // the button is already down, so send nothing and just restart
+                // the hold. Injecting a second press here is what used to show
+                // up as three clicks per click.
+                bool alreadyDown = s.holding && s.wantRelease;
+
+                bool flying = isFlyingMode(mode);
                 s.holding = true;
                 s.wantRelease = false;
                 s.holdIsP1 = isPlayer1;
                 s.heldTicks = 0;
-                s.holdLimit = std::max(1, scaleTicks(windowBaseTicks(mode)));
-                s.lastYVel = player->m_yVelocity;
-                s.haveYVel = true;
+                s.minHoldOnly = flying;
+                // Landing modes wait for the landing, up to the mode's window.
+                // Flying modes only stretch a too-short tap to a minimum, which
+                // is a small number - holding a ship up for half a second would
+                // fly it into the ceiling.
+                s.holdLimit = flying
+                    ? std::max(1, scaleTicks(static_cast<int>(setting<int64_t>("hold-length"))))
+                    : std::max(1, scaleTicks(windowBaseTicks(mode)));
+                s.sawFall = !movingAgainstGravity(player);
+                s.upsideAtPress = player->m_isUpsideDown;
                 if (debugLogging()) {
-                    log::info("[InputBuffer] simple: {} press held up to {}t | yvel {:.2f}",
-                        kModeName[static_cast<int>(mode)], s.holdLimit, s.lastYVel);
+                    log::info("[InputBuffer] simple: {} press, hold up to {}t ({}) | yvel {:.2f} | falling {}",
+                        kModeName[static_cast<int>(mode)], s.holdLimit,
+                        flying ? "min hold" : "until spent", player->m_yVelocity, s.sawFall);
                 }
+                if (!alreadyDown) inject(true, isPlayer1);
+                return;
             }
             inject(down, isPlayer1);
             return;
@@ -972,7 +993,8 @@ class $modify(IBLayer, GJBaseGameLayer) {
             s.holding = false;
             s.wantRelease = false;
             s.heldTicks = 0;
-            s.haveYVel = false;
+            s.minHoldOnly = false;
+            s.sawFall = false;
         }
         f->pendingRaw.clear();
         f->sinceInput = 999;
@@ -1047,18 +1069,23 @@ class $modify(IBLayer, GJBaseGameLayer) {
                 continue;
             }
             ++s.heldTicks;
-            float yv = player->m_yVelocity;
-            bool spent = s.haveYVel && std::fabs(yv - s.lastYVel) > 2.0f;
-            s.lastYVel = yv;
-            s.haveYVel = true;
+            bool against = movingAgainstGravity(player);
+            if (!against) s.sawFall = true;
+            // Gravity can only ever pull the player the way gravity points, so
+            // the first tick they move the other way is the tick the game spent
+            // the press on. A gravity flip (ball, spider, blue orb) counts too.
+            bool spent = !s.minHoldOnly
+                && ((s.sawFall && against) || player->m_isUpsideDown != s.upsideAtPress);
             bool expired = s.heldTicks >= s.holdLimit;
             if (s.wantRelease && (spent || expired)) {
                 inject(false, s.holdIsP1);
                 s.holding = false;
                 s.wantRelease = false;
                 if (debugLogging()) {
-                    log::info("[InputBuffer] simple: released after {}t ({})",
-                        s.heldTicks, spent ? "the game spent it" : "window expired");
+                    log::info("[InputBuffer] simple: released after {}t ({}) | yvel {:.2f}",
+                        s.heldTicks,
+                        spent ? "the game spent it" : (s.minHoldOnly ? "min hold done" : "window expired"),
+                        player->m_yVelocity);
                 }
             }
             else if (!s.wantRelease && (spent || expired)) {
