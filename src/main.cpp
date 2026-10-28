@@ -34,6 +34,7 @@
 #include <cstdlib>
 #include <deque>
 #include <string>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
@@ -194,6 +195,19 @@ bool g_simulating = false;    // a ghost preview is running
 bool g_simDied = false;       // the ghost died
 bool g_simHitPortal = false;  // the ghost reached something we don't simulate
 bool g_smart = true;          // ghost may use orbs / pads / gravity portals
+int g_simTick = 0;            // which tick of the preview is being stepped
+
+// Moving objects. The preview cannot run the level's trigger system, so each
+// nearby object's own speed is measured on the real ticks and carried forward
+// during a preview. Linear extrapolation is an approximation (it does not know
+// about easing or a move that is about to stop), but it is far closer than
+// treating moving platforms and saws as if they were standing still.
+struct Motion {
+    cocos2d::CCPoint last = {0.f, 0.f};
+    cocos2d::CCPoint vel = {0.f, 0.f};
+    bool seen = false;
+};
+std::unordered_map<GameObject*, Motion> g_objMotion;
 // The dt the game hands the player's own physics step. It is NOT seconds:
 // one 240-tick is 0.25 in these units, 60x the 1/240 that the layer's
 // processCommands gets. Stepping the ghost with seconds made it crawl
@@ -523,6 +537,7 @@ class $modify(IBLayer, GJBaseGameLayer) {
                 pressGhost(f->ghost1, !down);
                 if (dual) pressGhost(f->ghost2, !down);
             }
+            g_simTick = k;
             stepGhost(f->ghost1, dt);
             if (!g_simDied && dual) stepGhost(f->ghost2, dt);
             ++stepsUsed;
@@ -537,6 +552,7 @@ class $modify(IBLayer, GJBaseGameLayer) {
         g_simEnd = f->ghost1->getPosition();
 
         g_simulating = false;
+        g_simTick = 0;
         m_isDebugDrawEnabled = savedDebugDraw;
         restoreObjects();
         return safe || !g_simDied;
@@ -671,6 +687,12 @@ class $modify(IBLayer, GJBaseGameLayer) {
         Mode mode = modeOf(player);
         bool eligible = player && !player->m_isDashing && inputIsBuffered(mode, down);
 
+        // Standing on an orb, the press IS the orb. Holding it back for even a
+        // few ticks means flying past and missing it, so these always go
+        // straight through.
+        bool onOrb = player && player->m_touchedRing;
+        if (onOrb) eligible = false;
+
         // Fast spam (wave): don't fight the player's rhythm.
         if (f->sinceInput < 8) {
             if (++f->rapid >= 3) eligible = false;
@@ -687,6 +709,7 @@ class $modify(IBLayer, GJBaseGameLayer) {
                     down ? "press" : "release", isPlayer1, kModeName[static_cast<int>(mode)],
                     player ? player->m_isOnGround : false, player ? player->m_isOnGround2 : false,
                     player ? player->m_isDashing : false, inputIsBuffered(mode, down), f->rapid);
+                if (onOrb) log::info("[InputBuffer]   (on an orb: delivered immediately)");
             }
             inject(down, isPlayer1);
             return;
@@ -712,6 +735,7 @@ class $modify(IBLayer, GJBaseGameLayer) {
 
     void clearBuffers() {
         g_stallSeconds = 0.0;
+        g_objMotion.clear();
         auto& f = m_fields;
         for (auto& s : f->slot) {
             s.queue.clear();
@@ -790,6 +814,23 @@ class $modify(IBLayer, GJBaseGameLayer) {
     // stops at portals that change too much to preview.
     void collisionCheckObjects(PlayerObject* player, gd::vector<GameObject*>* objects, int objectCount, float dt) {
         if (!g_simulating || !isGhost(player)) {
+            // Measure how fast the objects around the real player are moving,
+            // once per tick, so a preview can carry that motion forward.
+            if (!g_simulating && player == m_player1 && setting<bool>("simulate-moving")) {
+                if (g_objMotion.size() > 4096) g_objMotion.clear();
+                auto& list = *objects;
+                for (int i = 0; i < objectCount; ++i) {
+                    auto object = list[i];
+                    if (!object) continue;
+                    auto pos = object->getPosition();
+                    auto& m = g_objMotion[object];
+                    if (m.seen) {
+                        m.vel = { pos.x - m.last.x, pos.y - m.last.y };
+                    }
+                    m.last = pos;
+                    m.seen = true;
+                }
+            }
             GJBaseGameLayer::collisionCheckObjects(player, objects, objectCount, dt);
             return;
         }
@@ -826,7 +867,30 @@ class $modify(IBLayer, GJBaseGameLayer) {
             }
         }
         g_simKept += static_cast<int>(relevant.size());
+
+        // Carry each moving object forward to where it would be on this tick
+        // of the preview, run the collision check, then put it back exactly.
+        static std::vector<std::pair<GameObject*, CCPoint>> moved;
+        moved.clear();
+        if (g_simTick > 0 && !g_objMotion.empty()) {
+            for (auto object : relevant) {
+                auto it = g_objMotion.find(object);
+                if (it == g_objMotion.end()) continue;
+                auto v = it->second.vel;
+                if (std::fabs(v.x) < 0.01f && std::fabs(v.y) < 0.01f) continue;
+                auto cur = object->getPosition();
+                moved.emplace_back(object, cur);
+                object->setPosition({ cur.x + v.x * g_simTick, cur.y + v.y * g_simTick });
+                object->setObjectRectDirty(true);
+            }
+        }
+
         GJBaseGameLayer::collisionCheckObjects(player, &relevant, static_cast<int>(relevant.size()), dt);
+
+        for (auto& mv : moved) {
+            mv.first->setPosition(mv.second);
+            mv.first->setObjectRectDirty(true);
+        }
     }
 
     bool canBeActivatedByPlayer(PlayerObject* player, EffectGameObject* object) {
