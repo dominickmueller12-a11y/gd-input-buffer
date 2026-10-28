@@ -194,6 +194,10 @@ bool g_simDied = false;       // the ghost died
 bool g_simHitPortal = false;  // the ghost reached something we don't simulate
 bool g_smart = true;          // ghost may use orbs / pads / gravity portals
 int g_simObjectsSeen = 0;     // objects the ghost's collision pass looked at (debug)
+int g_simKept = 0;            // objects actually handed to the collision code (debug)
+int g_simDeathCalls = 0;      // destroyPlayer calls seen during a preview (debug)
+double g_simMaxYVel = 0.0;    // biggest vertical speed the ghost reached (debug)
+cocos2d::CCPoint g_simEnd = {0.f, 0.f}; // where the ghost ended up (debug)
 double g_stallSeconds = 0.0;  // time spent deciding; removed from the next frame
 
 PlayerObject* g_ghost1 = nullptr;
@@ -512,9 +516,15 @@ class $modify(IBLayer, GJBaseGameLayer) {
             stepGhost(f->ghost1, dt);
             if (!g_simDied && dual) stepGhost(f->ghost2, dt);
             ++stepsUsed;
+            // Second, independent death signal: the game flags the player
+            // itself. Another mod hooking destroyPlayer before us (Mega Hack
+            // and friends) can keep that call from ever reaching our hook.
+            if (f->ghost1->m_isDead || (dual && f->ghost2->m_isDead)) g_simDied = true;
+            g_simMaxYVel = std::max(g_simMaxYVel, std::fabs(f->ghost1->m_yVelocity));
             if (g_simDied) break;
             if (g_simHitPortal) { safe = true; break; }
         }
+        g_simEnd = f->ghost1->getPosition();
 
         g_simulating = false;
         restoreObjects();
@@ -542,6 +552,9 @@ class $modify(IBLayer, GJBaseGameLayer) {
         auto t0 = std::chrono::steady_clock::now();
         int sims = 0, steps = 0;
         g_simObjectsSeen = 0;
+        g_simKept = 0;
+        g_simDeathCalls = 0;
+        g_simMaxYVel = 0.0;
         CCPoint realPos = m_player1->getPosition();
         copyState(m_fields->ghost1, m_player1);
         CCPoint ghostPos = m_fields->ghost1->getPosition();
@@ -593,11 +606,12 @@ class $modify(IBLayer, GJBaseGameLayer) {
         g_stallSeconds += totalSec;
 
         if (debugLogging()) {
-            log::info("[InputBuffer] {} {} | window {}t | delay {} ({}) | {} sims, {} ticks, {} us | real ({:.1f},{:.1f}) ghost ({:.1f},{:.1f}) yvel {:.2f} | objs seen {}",
+            log::info("[InputBuffer] {} {} | win {}t | delay {} ({}) | {} sims, {} ticks, {} us | start ({:.0f},{:.0f}) -> ghost end ({:.0f},{:.0f}) dx {:.0f} | maxyvel {:.2f} | objs {}/{} | deathcalls {}",
                 kModeName[static_cast<int>(mode)], down ? "press" : "release", window,
                 found ? chosen : 0, found ? (chosen == 0 ? "already safe" : "shifted") : "nothing survives",
                 sims, steps, static_cast<long long>(totalSec * 1e6),
-                realPos.x, realPos.y, ghostPos.x, ghostPos.y, m_player1->m_yVelocity, g_simObjectsSeen);
+                realPos.x, realPos.y, g_simEnd.x, g_simEnd.y, g_simEnd.x - realPos.x,
+                g_simMaxYVel, g_simKept, g_simObjectsSeen, g_simDeathCalls);
         }
 
         return found ? chosen : 0;
@@ -796,6 +810,7 @@ class $modify(IBLayer, GJBaseGameLayer) {
                 else player->m_playerSpeed = speed;
             }
         }
+        g_simKept += static_cast<int>(relevant.size());
         GJBaseGameLayer::collisionCheckObjects(player, &relevant, static_cast<int>(relevant.size()), dt);
     }
 
@@ -945,6 +960,7 @@ class $modify(IBPlayLayer, PlayLayer) {
         if (g_simulating) {
             // Only the ghost may die in a preview; the anti-cheat spike is not
             // a real death.
+            ++g_simDeathCalls;
             if (isGhost(player) && object != m_anticheatSpike) g_simDied = true;
             return;
         }
