@@ -467,7 +467,8 @@ class $modify(IBLayer, GJBaseGameLayer) {
     }
 
     void stepGhost(PlayerObject* ghost, float dt) {
-        ghost->update(dt);
+        ghost->update(dt);      // physics: velocities, jumps, gravity
+        ghost->updateMove(dt);  // actually travel (2.2 moved this out of update)
         ghost->updateRotation(dt);
         ghost->m_collisionLogTop->removeAllObjects();
         ghost->m_collisionLogBottom->removeAllObjects();
@@ -643,10 +644,10 @@ class $modify(IBLayer, GJBaseGameLayer) {
         }
         f->sinceInput = 0;
 
-        // In 2-player mode each player has their own buffer; in dual mode
-        // both players follow player 1's input.
-        if (isTwoPlayer() && !isPlayer1) {
-            eligible = false; // keep player 2 vanilla in 2-player levels
+        // GD reports every click twice (once per player). Outside 2-player
+        // levels the player-2 copy just follows whatever player 1 decided.
+        if (!isPlayer1) {
+            eligible = false;
         }
 
         auto pl = asPlayLayer();
@@ -770,6 +771,8 @@ class $modify(IBLayer, GJBaseGameLayer) {
                 continue;
             }
             bool stop = (kStopTypes & bit) != 0;
+            // the portal the player is already in / just used doesn't end the preview
+            if (stop && object == player->m_lastActivatedPortal) continue;
             float speed = stop ? 0.f : speedPortalValue(object->m_objectID);
             if (!stop && speed <= 0.f) continue;
             if (!haveRect) {
