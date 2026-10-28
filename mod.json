@@ -8,15 +8,29 @@
 	},
 	"id": "dominick.input-buffer",
 	"name": "Input Buffer",
-	"version": "v1.7.0",
+	"version": "v2.0.0",
 	"developer": "Dominick",
 	"description": "Click a few ticks early and the click is moved to the tick where it actually works.",
-	"tags": ["gameplay", "utility", "cheat"],
+	"tags": [
+		"gameplay",
+		"utility",
+		"cheat"
+	],
 	"settings": {
 		"timing-help": {
 			"type": "title",
 			"name": "How to read the timing numbers",
 			"description": "Geometry Dash runs its physics at 240 ticks per second.\n\n1 tick = 1 frame at 240 FPS\n4 ticks = 1 frame at 60 FPS\n\nA window of N ticks means: if you click up to N ticks before the moment the click actually needed to happen, the mod holds your click and plays it on the tick that works. Click earlier than N ticks and it goes through unchanged, exactly like vanilla.\n\nIf you change Game Speed (TPS), windows are still measured in 240-TPS ticks so they mean the same amount of real time."
+		},
+		"buffer-mode": {
+			"type": "string",
+			"name": "Buffer Mode",
+			"description": "Simple (recommended): the mod does not predict anything. Your click goes through instantly and the button is simply held a few more ticks, so the game itself spends it on the next landing or orb - Geometry Dash already jumps the moment you land while holding. Nothing can be mistimed, because the game decides the timing.\n\nPredictive: the old behaviour. A hidden copy of your player is simulated forward to work out which tick the click should land on. More ambitious, but it depends on reading the real player's state correctly and it gets that wrong often enough to matter.",
+			"default": "Simple (hold the click)",
+			"one-of": [
+				"Simple (hold the click)",
+				"Predictive (simulate)"
+			]
 		},
 		"main-window": {
 			"type": "string",
@@ -38,7 +52,6 @@
 				"120 ticks (0.5 second)"
 			]
 		},
-
 		"landing-title": {
 			"type": "title",
 			"name": "Landing and orb modes",
@@ -51,7 +64,10 @@
 			"default": -1,
 			"min": -1,
 			"max": 120,
-			"control": { "arrows": true, "slider": false }
+			"control": {
+				"arrows": true,
+				"slider": false
+			}
 		},
 		"ball-window": {
 			"type": "int",
@@ -60,7 +76,10 @@
 			"default": -1,
 			"min": -1,
 			"max": 120,
-			"control": { "arrows": true, "slider": false }
+			"control": {
+				"arrows": true,
+				"slider": false
+			}
 		},
 		"robot-window": {
 			"type": "int",
@@ -69,7 +88,10 @@
 			"default": -1,
 			"min": -1,
 			"max": 120,
-			"control": { "arrows": true, "slider": false }
+			"control": {
+				"arrows": true,
+				"slider": false
+			}
 		},
 		"spider-window": {
 			"type": "int",
@@ -78,9 +100,11 @@
 			"default": -1,
 			"min": -1,
 			"max": 120,
-			"control": { "arrows": true, "slider": false }
+			"control": {
+				"arrows": true,
+				"slider": false
+			}
 		},
-
 		"flying-title": {
 			"type": "title",
 			"name": "Flying modes",
@@ -93,7 +117,10 @@
 			"default": -1,
 			"min": -1,
 			"max": 120,
-			"control": { "arrows": true, "slider": false }
+			"control": {
+				"arrows": true,
+				"slider": false
+			}
 		},
 		"ufo-window": {
 			"type": "int",
@@ -102,7 +129,10 @@
 			"default": -1,
 			"min": -1,
 			"max": 120,
-			"control": { "arrows": true, "slider": false }
+			"control": {
+				"arrows": true,
+				"slider": false
+			}
 		},
 		"swing-window": {
 			"type": "int",
@@ -111,7 +141,10 @@
 			"default": -1,
 			"min": -1,
 			"max": 120,
-			"control": { "arrows": true, "slider": false }
+			"control": {
+				"arrows": true,
+				"slider": false
+			}
 		},
 		"wave-window": {
 			"type": "int",
@@ -120,16 +153,22 @@
 			"default": -1,
 			"min": -1,
 			"max": 120,
-			"control": { "arrows": true, "slider": false }
+			"control": {
+				"arrows": true,
+				"slider": false
+			}
 		},
 		"wave-mode": {
 			"type": "string",
 			"name": "Wave Mode",
 			"description": "Off: wave is never buffered.\nPress Only: only presses are moved to a surviving tick.\nGrid: presses AND releases are moved, so both corners of every wave zig-zag land on the tick that fits the gap.",
 			"default": "Grid (Press + Release)",
-			"one-of": ["Off", "Press Only", "Grid (Press + Release)"]
+			"one-of": [
+				"Off",
+				"Press Only",
+				"Grid (Press + Release)"
+			]
 		},
-
 		"hotkeys-title": {
 			"type": "title",
 			"name": "Hotkeys",
@@ -170,7 +209,6 @@
 			"default": "F10",
 			"category": "universal"
 		},
-
 		"general-title": {
 			"type": "title",
 			"name": "General"
@@ -182,7 +220,13 @@
 			"default": 240,
 			"min": 240,
 			"max": 1440,
-			"control": { "arrows": true, "arrow-step": 60, "big-arrows": true, "big-arrow-step": 240, "slider": false }
+			"control": {
+				"arrows": true,
+				"arrow-step": 60,
+				"big-arrows": true,
+				"big-arrow-step": 240,
+				"slider": false
+			}
 		},
 		"look-ahead": {
 			"type": "int",
@@ -191,7 +235,12 @@
 			"default": 32,
 			"min": 16,
 			"max": 240,
-			"control": { "arrows": true, "arrow-step": 8, "slider": true, "slider-step": 8 }
+			"control": {
+				"arrows": true,
+				"arrow-step": 8,
+				"slider": true,
+				"slider-step": 8
+			}
 		},
 		"hold-length": {
 			"type": "int",
@@ -200,7 +249,12 @@
 			"default": 10,
 			"min": 2,
 			"max": 48,
-			"control": { "arrows": true, "arrow-step": 2, "slider": true, "slider-step": 2 }
+			"control": {
+				"arrows": true,
+				"arrow-step": 2,
+				"slider": true,
+				"slider-step": 2
+			}
 		},
 		"simulate-moving": {
 			"type": "bool",
@@ -221,7 +275,12 @@
 			"default": 16000,
 			"min": 100,
 			"max": 80000,
-			"control": { "arrows": true, "arrow-step": 100, "slider": true, "slider-step": 100 }
+			"control": {
+				"arrows": true,
+				"arrow-step": 100,
+				"slider": true,
+				"slider-step": 100
+			}
 		},
 		"buffer-releases": {
 			"type": "bool",

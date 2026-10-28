@@ -1,3 +1,8 @@
+# v2.0.0
+- New Buffer Mode setting, defaulting to Simple, which does not predict anything. The click goes through instantly and the button is held a few more ticks so the game spends it on the next landing or orb. Geometry Dash already jumps the moment you land while holding, so the game decides the timing and the whole class of bug that broke v1.5, v1.6 and v1.7 cannot happen. Orbs work for free, because holding through an orb activates it.
+- The held press is let go on the tick the game spends it, spotted by y-velocity moving further in one tick than gravity ever does. That works in every mode, gravity and speed without asking a flag anything.
+- Predictive mode is still there as an option, and no longer copies m_touchedRing, m_touchedPad or m_touchedGravityPortal into the preview player. m_touchedPad read true on every single press of a real session, so the preview thought it was on a jump pad, decided every press already did something, and passed all of them through unbuffered.
+
 # v1.7.0
 - The "does this press do anything" test no longer trusts m_isOnGround, m_touchedRing or m_touchedPad. Those read true while the player is falling, so every single cube press answered "works now" after zero simulated ticks and went straight through - v1.6.0 changed nothing for that reason.
 - Instead the mod runs the ghost once with no input at all, then asks whether pressing on a given tick moves it off that path. A press the game throws away leaves the path untouched, which is the thing worth detecting, and it cannot be fooled by a stale flag.
