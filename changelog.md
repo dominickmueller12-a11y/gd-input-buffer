@@ -1,3 +1,6 @@
+# v2.0.1
+- Simple mode now leaves ship, UFO, swing and wave completely alone. Holding the button in those modes is the control itself: a ship accelerates gradually, so there is no single tick where the press is spent to let go on, and the button would have stayed down far too long. A click in a flying mode is never thrown away in the first place, so there is nothing there to buffer.
+
 # v2.0.0
 - New Buffer Mode setting, defaulting to Simple, which does not predict anything. The click goes through instantly and the button is held a few more ticks so the game spends it on the next landing or orb. Geometry Dash already jumps the moment you land while holding, so the game decides the timing and the whole class of bug that broke v1.5, v1.6 and v1.7 cannot happen. Orbs work for free, because holding through an orb activates it.
 - The held press is let go on the tick the game spends it, spotted by y-velocity moving further in one tick than gravity ever does. That works in every mode, gravity and speed without asking a flag anything.

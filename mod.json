@@ -8,7 +8,7 @@
 	},
 	"id": "dominick.input-buffer",
 	"name": "Input Buffer",
-	"version": "v2.0.0",
+	"version": "v2.0.1",
 	"developer": "Dominick",
 	"description": "Click a few ticks early and the click is moved to the tick where it actually works.",
 	"tags": [
@@ -25,7 +25,7 @@
 		"buffer-mode": {
 			"type": "string",
 			"name": "Buffer Mode",
-			"description": "Simple (recommended): the mod does not predict anything. Your click goes through instantly and the button is simply held a few more ticks, so the game itself spends it on the next landing or orb - Geometry Dash already jumps the moment you land while holding. Nothing can be mistimed, because the game decides the timing.\n\nPredictive: the old behaviour. A hidden copy of your player is simulated forward to work out which tick the click should land on. More ambitious, but it depends on reading the real player's state correctly and it gets that wrong often enough to matter.",
+			"description": "Simple (recommended): the mod does not predict anything. Your click goes through instantly and the button is simply held a few more ticks, so the game itself spends it on the next landing or orb - Geometry Dash already jumps the moment you land while holding. Nothing can be mistimed, because the game decides the timing. Applies to cube, ball, robot and spider; ship, UFO, swing and wave pass through untouched, because holding the button there is the control itself and a click is never wasted.\n\nPredictive: the old behaviour, and the only mode that touches the flying modes. A hidden copy of your player is simulated forward to work out which tick the click should land on. More ambitious, but it depends on reading the real player's state correctly and it gets that wrong often enough to matter.",
 			"default": "Simple (hold the click)",
 			"one-of": [
 				"Simple (hold the click)",
