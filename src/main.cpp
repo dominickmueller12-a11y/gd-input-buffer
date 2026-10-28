@@ -232,9 +232,12 @@ class $modify(IBLayer, GJBaseGameLayer) {
     void setLabel(CCLabelBMFont* label) { m_fields->label = label; }
 
     static void onModify(auto& self) {
-        // Run before other mods so a simulated input is never seen as real.
-        (void)self.setHookPriority("GJBaseGameLayer::handleButton", Priority::FirstPre);
-        (void)self.setHookPriority("GJBaseGameLayer::processCommands", Priority::FirstPre);
+        // Run AFTER every other mod's hook. Other mods then see the player's
+        // real input exactly once, and the inputs / ticks we inject for the
+        // preview go straight to the game without passing through their hooks
+        // (no inflated CPS counters, no "speedhack" false positives).
+        (void)self.setHookPriority("GJBaseGameLayer::handleButton", Priority::LastPre);
+        (void)self.setHookPriority("GJBaseGameLayer::processCommands", Priority::LastPre);
     }
 
     // ---- helpers ----------------------------------------------------------
@@ -739,12 +742,49 @@ class $modify(IBHardStreak, HardStreak) {
     }
 };
 
+// Saving / rewinding a checkpoint re-seeks the music; FMOD seeks can block for
+// tens of milliseconds, and they are pointless because we restore the exact
+// same state. Skip all music work while a decision is in progress.
+class $modify(IBAudioLayer, GJBaseGameLayer) {
+    void resetAudio() {
+        if (g_busy) return;
+        GJBaseGameLayer::resetAudio();
+    }
+    void updateTimeWarp(float timeWarp) {
+        if (g_busy) return;
+        GJBaseGameLayer::updateTimeWarp(timeWarp);
+    }
+};
+
+class $modify(IBAudioPlay, PlayLayer) {
+    void startMusic() {
+        if (g_busy) return;
+        PlayLayer::startMusic();
+    }
+    void prepareMusic(bool dontWait) {
+        if (g_busy) return;
+        PlayLayer::prepareMusic(dontWait);
+    }
+};
+
 class $modify(IBAudio, FMODAudioEngine) {
+    void setMusicTimeMS(unsigned int time, bool dontWait, int musicID) {
+        if (g_busy) return;
+        FMODAudioEngine::setMusicTimeMS(time, dontWait, musicID);
+    }
+    void fadeInMusic(float duration, int channel) {
+        if (g_busy) return;
+        FMODAudioEngine::fadeInMusic(duration, channel);
+    }
+    void fadeOutMusic(float duration, int channel) {
+        if (g_busy) return;
+        FMODAudioEngine::fadeOutMusic(duration, channel);
+    }
     int playEffectAdvanced(gd::string path, float speed, float p3, float volume, float pitch,
                            bool fft, bool reverb, int startMillis, int endMillis, int fadeIn,
                            int fadeOut, bool loop, int effectID, bool overrideSound, bool noPreload,
                            int channelID, int uniqueID, float minInterval, int sfxGroup) {
-        if (g_simulating) return 0; // no sound effects from the preview
+        if (g_busy) return 0; // no sound effects from the preview
         return FMODAudioEngine::playEffectAdvanced(path, speed, p3, volume, pitch, fft, reverb,
             startMillis, endMillis, fadeIn, fadeOut, loop, effectID, overrideSound, noPreload,
             channelID, uniqueID, minInterval, sfxGroup);
