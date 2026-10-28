@@ -912,7 +912,21 @@ class $modify(IBLayer, GJBaseGameLayer) {
 
         // Simple mode: no prediction at all. Send the press now and keep the
         // button held, then let go the moment the game spends it.
+        //
+        // Only landing modes. In the flying modes holding the button IS the
+        // control - in a ship it accelerates gradually, so there is no single
+        // tick where the press gets "spent" to let go on, and holding it even
+        // a few ticks too long flies you into the ceiling. A click there is
+        // never wasted in the first place, so there is nothing to buffer.
         if (simpleMode()) {
+            if (isFlyingMode(mode)) {
+                if (debugLogging()) {
+                    log::info("[InputBuffer] simple: {} {} passthrough (flying mode)",
+                        kModeName[static_cast<int>(mode)], down ? "press" : "release");
+                }
+                inject(down, isPlayer1);
+                return;
+            }
             if (down) {
                 s.holding = true;
                 s.wantRelease = false;
