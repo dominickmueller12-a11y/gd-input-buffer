@@ -158,6 +158,13 @@ int windowBaseTicks(Mode m) {
     return v;
 }
 
+// Simple mode holds the real button down instead of predicting anything. GD
+// already jumps the instant you land while the button is held, so the game
+// decides the timing and no simulation can get it wrong.
+bool simpleMode() {
+    return setting<std::string>("buffer-mode").rfind("Simple", 0) == 0;
+}
+
 // Is this kind of input (press / release) buffered in this mode right now?
 bool inputIsBuffered(Mode m, bool down) {
     if (windowBaseTicks(m) <= 0) return false;
@@ -334,6 +341,17 @@ struct Queued {
 struct Slot {
     std::deque<Queued> queue; // inputs waiting to be played, in order
     int shift = 0;            // delay applied to the current run of inputs
+
+    // Simple mode. The press goes through at once and the mod only keeps the
+    // button held a few more ticks, so the game itself can spend it on the
+    // landing or orb the player was aiming for.
+    bool holding = false;     // still holding a press past its real release
+    bool wantRelease = false; // the player let go; we are sitting on it
+    bool holdIsP1 = true;     // which player the held press belongs to
+    int heldTicks = 0;        // ticks held so far
+    int holdLimit = 0;        // give up and release after this many
+    float lastYVel = 0.f;     // to spot the jump on the tick it happens
+    bool haveYVel = false;
 };
 
 } // namespace
@@ -473,9 +491,12 @@ class $modify(IBLayer, GJBaseGameLayer) {
         ghost->m_stateRingJump = real->m_stateRingJump;
         ghost->m_stateRingJump2 = real->m_stateRingJump2;
         ghost->m_wasRobotJump = real->m_wasRobotJump;
-        ghost->m_touchedRing = real->m_touchedRing;
-        ghost->m_touchedPad = real->m_touchedPad;
-        ghost->m_touchedGravityPortal = real->m_touchedGravityPortal;
+        // m_touchedRing / m_touchedPad / m_touchedGravityPortal are NOT copied.
+        // They read true long after the fact - m_touchedPad was set on every
+        // single press in a real session - and copying them made the preview
+        // think it was standing on a jump pad, so any press "did something"
+        // and every click went through unbuffered. The ghost's own collision
+        // checks set these honestly, so leave them cleared.
         // position / motion, in case copyAttributes leaves any of it out
         ghost->setPosition(real->getPosition());
         ghost->setRotation(real->getRotation());
@@ -847,6 +868,16 @@ class $modify(IBLayer, GJBaseGameLayer) {
             return;
         }
 
+        // Simple mode: the player letting go while we are still holding the
+        // press is the one input we sit on. Everything else goes straight
+        // through, so nothing can feel laggy.
+        if (simpleMode() && !down && s.holding && !s.wantRelease) {
+            s.wantRelease = true;
+            f->sinceInput = 0;
+            if (debugLogging()) log::info("[InputBuffer] simple: holding the release ({}t so far)", s.heldTicks);
+            return;
+        }
+
         // Something earlier is still waiting: shift this one by the same amount.
         if (!s.queue.empty()) {
             enqueue(s, down, isPlayer1, s.shift);
@@ -857,12 +888,6 @@ class $modify(IBLayer, GJBaseGameLayer) {
         auto player = playerFor(idx);
         Mode mode = modeOf(player);
         bool eligible = player && !player->m_isDashing && inputIsBuffered(mode, down);
-
-        // Standing on an orb, the press IS the orb. Holding it back for even a
-        // few ticks means flying past and missing it, so these always go
-        // straight through.
-        bool onOrb = player && player->m_touchedRing;
-        if (onOrb) eligible = false;
 
         // Fast spam (wave): don't fight the player's rhythm.
         if (f->sinceInput < 8) {
@@ -880,7 +905,26 @@ class $modify(IBLayer, GJBaseGameLayer) {
                     down ? "press" : "release", isPlayer1, kModeName[static_cast<int>(mode)],
                     player ? player->m_isOnGround : false, player ? player->m_isOnGround2 : false,
                     player ? player->m_isDashing : false, inputIsBuffered(mode, down), f->rapid);
-                if (onOrb) log::info("[InputBuffer]   (on an orb: delivered immediately)");
+            }
+            inject(down, isPlayer1);
+            return;
+        }
+
+        // Simple mode: no prediction at all. Send the press now and keep the
+        // button held, then let go the moment the game spends it.
+        if (simpleMode()) {
+            if (down) {
+                s.holding = true;
+                s.wantRelease = false;
+                s.holdIsP1 = isPlayer1;
+                s.heldTicks = 0;
+                s.holdLimit = std::max(1, scaleTicks(windowBaseTicks(mode)));
+                s.lastYVel = player->m_yVelocity;
+                s.haveYVel = true;
+                if (debugLogging()) {
+                    log::info("[InputBuffer] simple: {} press held up to {}t | yvel {:.2f}",
+                        kModeName[static_cast<int>(mode)], s.holdLimit, s.lastYVel);
+                }
             }
             inject(down, isPlayer1);
             return;
@@ -911,6 +955,10 @@ class $modify(IBLayer, GJBaseGameLayer) {
         for (auto& s : f->slot) {
             s.queue.clear();
             s.shift = 0;
+            s.holding = false;
+            s.wantRelease = false;
+            s.heldTicks = 0;
+            s.haveYVel = false;
         }
         f->pendingRaw.clear();
         f->sinceInput = 999;
@@ -969,6 +1017,41 @@ class $modify(IBLayer, GJBaseGameLayer) {
 
         for (auto& s : f->slot) {
             for (auto& q : s.queue) --q.ticksLeft;
+        }
+
+        // Simple mode: watch for the tick the game spends the held press on. A
+        // jump, an orb or a pad all move y-velocity far more in one tick than
+        // gravity ever does, which works in every mode, gravity and speed
+        // without asking a flag anything.
+        for (int i = 0; i < 2; ++i) {
+            auto& s = f->slot[i];
+            if (!s.holding) continue;
+            auto player = playerFor(i);
+            if (!player || m_playerDied) {
+                s.holding = false;
+                s.wantRelease = false;
+                continue;
+            }
+            ++s.heldTicks;
+            float yv = player->m_yVelocity;
+            bool spent = s.haveYVel && std::fabs(yv - s.lastYVel) > 2.0f;
+            s.lastYVel = yv;
+            s.haveYVel = true;
+            bool expired = s.heldTicks >= s.holdLimit;
+            if (s.wantRelease && (spent || expired)) {
+                inject(false, s.holdIsP1);
+                s.holding = false;
+                s.wantRelease = false;
+                if (debugLogging()) {
+                    log::info("[InputBuffer] simple: released after {}t ({})",
+                        s.heldTicks, spent ? "the game spent it" : "window expired");
+                }
+            }
+            else if (!s.wantRelease && (spent || expired)) {
+                // The player is still physically holding the button, so there
+                // is nothing of ours left to let go of.
+                s.holding = false;
+            }
         }
 
         if (!f->pendingRaw.empty()) {
