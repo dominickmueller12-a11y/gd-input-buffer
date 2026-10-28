@@ -8,7 +8,7 @@
 	},
 	"id": "dominick.input-buffer",
 	"name": "Input Buffer",
-	"version": "v1.0.3",
+	"version": "v1.1.0",
 	"developer": "Dominick",
 	"description": "Click a few ticks early and the click is moved to the tick where it actually works.",
 	"tags": ["gameplay", "utility", "cheat"],
@@ -197,6 +197,12 @@
 			"min": 2,
 			"max": 48,
 			"control": { "arrows": true, "arrow-step": 2, "slider": true, "slider-step": 2 }
+		},
+		"simulate-interactables": {
+			"type": "bool",
+			"name": "Preview uses orbs, pads and gravity portals",
+			"description": "The preview player activates orbs, jump pads and gravity portals it touches (their state is restored afterwards). Turn off to preview against solid blocks and hazards only.",
+			"default": true
 		},
 		"sim-budget": {
 			"type": "int",
